@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
+
 	"github.com/opd-ai/store/pkg/handler"
 	"github.com/opd-ai/store/pkg/models"
 )
@@ -39,13 +43,12 @@ func (h *DigitalMediaHandler) Handle(ctx context.Context, payment *models.Paymen
 
 	if storage == "s3" {
 		// For S3, generate a presigned URL
-		url, err := h.generateS3URL(ctx, item, config)
+		url, size, err := h.generateS3URLWithSize(ctx, item, config)
 		if err != nil {
 			return nil, err
 		}
 		downloadURL = url
-		// In a real implementation, would fetch actual file size from S3
-		fileSize = 0
+		fileSize = size
 	} else {
 		// For local storage, return a direct download link
 		filePath := config.GetString("file_path")
@@ -163,6 +166,14 @@ func (h *DigitalMediaHandler) Metadata() handler.HandlerMetadata {
 				Required:    false,
 			},
 			{
+				Name:        "s3_key",
+				Type:        "string",
+				Description: "Explicit S3 object key (overrides s3_key_prefix + item.ID)",
+				Example:     "downloads/product.pdf",
+				Validation:  "",
+				Required:    false,
+			},
+			{
 				Name:        "expiration_hours",
 				Type:        "number",
 				Description: "Hours until download link expires",
@@ -182,19 +193,71 @@ func (h *DigitalMediaHandler) Metadata() handler.HandlerMetadata {
 	}
 }
 
-// generateS3URL generates a presigned S3 URL for the item.
-// In a real implementation, this would use the AWS SDK.
-func (h *DigitalMediaHandler) generateS3URL(ctx context.Context, item *models.Item, config handler.Config) (string, error) {
+// generateS3URLWithSize generates a presigned S3 URL and retrieves file size.
+func (h *DigitalMediaHandler) generateS3URLWithSize(ctx context.Context, item *models.Item, config handler.Config) (string, int64, error) {
 	bucket := config.GetString("s3_bucket")
 	region := config.GetString("s3_region")
 	prefix := config.GetString("s3_key_prefix")
+	s3Key := config.GetString("s3_key")
 
 	if prefix == "" {
 		prefix = "items/"
 	}
 
-	// In a real implementation, would use AWS SDK to generate presigned URL
-	// For now, return a mock URL
-	url := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s%s", bucket, region, prefix, item.ID)
-	return url, nil
+	// Construct the S3 key - use explicit s3_key if provided, otherwise use prefix + item.ID
+	key := s3Key
+	if key == "" {
+		key = prefix + item.ID
+	}
+
+	// Get expiration duration
+	expirationHours := config.GetInt("expiration_hours")
+	if expirationHours == 0 {
+		expirationHours = 24
+	}
+
+	// Create AWS session
+	sess, err := session.NewSession(&aws.Config{
+		Region: aws.String(region),
+	})
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to create AWS session: %w", err)
+	}
+
+	// Create S3 service client
+	svc := s3.New(sess)
+
+	// Get object metadata to retrieve file size
+	headOutput, err := svc.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to get object metadata: %w", err)
+	}
+
+	fileSize := int64(0)
+	if headOutput.ContentLength != nil {
+		fileSize = *headOutput.ContentLength
+	}
+
+	// Generate presigned URL request
+	req, _ := svc.GetObjectRequest(&s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+
+	// Sign the request with expiration
+	url, err := req.Presign(time.Duration(expirationHours) * time.Hour)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to generate presigned URL: %w", err)
+	}
+
+	return url, fileSize, nil
+}
+
+// generateS3URL generates a presigned S3 URL for the item (without size lookup).
+func (h *DigitalMediaHandler) generateS3URL(ctx context.Context, item *models.Item, config handler.Config) (string, error) {
+	url, _, err := h.generateS3URLWithSize(ctx, item, config)
+	return url, err
 }

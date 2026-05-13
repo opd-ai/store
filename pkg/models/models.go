@@ -78,6 +78,16 @@ type FormSubmission struct {
 	CreatedAt   time.Time  `json:"created_at"`
 }
 
+// DownloadLog tracks download attempts for rate limiting.
+type DownloadLog struct {
+	ID           string    `json:"id" gorm:"primaryKey"`
+	PaymentID    string    `json:"payment_id" gorm:"index"`
+	Payment      *Payment  `json:"-" gorm:"foreignKey:PaymentID"`
+	IPAddress    string    `json:"ip_address" gorm:"index"`
+	UserAgent    string    `json:"user_agent"`
+	DownloadedAt time.Time `json:"downloaded_at" gorm:"index"`
+}
+
 // JSONMap custom type for JSONB fields.
 type JSONMap map[string]interface{}
 
@@ -182,5 +192,16 @@ func NewFormSubmission(paymentID string, formData map[string]interface{}) *FormS
 		PaymentID: paymentID,
 		FormData:  formData,
 		CreatedAt: time.Now(),
+	}
+}
+
+// NewDownloadLog creates a new download log entry.
+func NewDownloadLog(paymentID, ipAddress, userAgent string) *DownloadLog {
+	return &DownloadLog{
+		ID:           NewID(),
+		PaymentID:    paymentID,
+		IPAddress:    ipAddress,
+		UserAgent:    userAgent,
+		DownloadedAt: time.Now(),
 	}
 }
