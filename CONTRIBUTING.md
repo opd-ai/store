@@ -256,6 +256,27 @@ Run tests in isolation, don't rely on external services in unit tests.
 4. **Assertions**:
 Use clear assertions that fail with helpful messages.
 
+### Test Database
+
+Integration tests use SQLite for fast in-memory databases. Production uses PostgreSQL only.
+
+**Why SQLite for tests?**
+- Fast in-memory operation (`:memory:` database)
+- No external dependencies required for running tests
+- Clean state for each test run
+- CGO dependency isolated to test code only
+
+**Running tests:**
+```bash
+# Standard test run (requires CGO for SQLite)
+CGO_ENABLED=1 go test ./...
+
+# Skip integration tests
+go test -short ./...
+```
+
+**Important:** The `github.com/mattn/go-sqlite3` dependency in `go.mod` is used exclusively for testing. Production deployments use PostgreSQL and do not include SQLite code in the binary.
+
 ## Documentation
 
 - Update DESIGN.md for architecture changes

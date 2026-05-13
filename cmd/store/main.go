@@ -27,6 +27,11 @@ func main() {
 	// Load .env file if present
 	_ = godotenv.Load()
 
+	// Ensure required directories exist
+	if err := ensureDirectories(); err != nil {
+		log.Fatalf("Failed to create required directories: %v", err)
+	}
+
 	// Initialize database
 	db, err := initDatabase()
 	if err != nil {
@@ -162,6 +167,28 @@ func waitForShutdown(server *http.Server) {
 	}
 
 	log.Println("Server stopped")
+}
+
+// ensureDirectories creates required directories if they don't exist.
+func ensureDirectories() error {
+	dirs := []string{
+		os.Getenv("STORE_UPLOADS_DIR"),
+		os.Getenv("STORE_TEMPLATES_DIR"),
+	}
+
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+
+		log.Printf("Ensured directory exists: %s", dir)
+	}
+
+	return nil
 }
 
 // initDatabase initializes the database connection.

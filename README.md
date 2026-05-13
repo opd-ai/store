@@ -1,5 +1,9 @@
 # opd-ai/store
 
+[![CI](https://github.com/opd-ai/store/workflows/CI/badge.svg)](https://github.com/opd-ai/store/actions)
+[![Coverage](https://codecov.io/gh/opd-ai/store/branch/main/graph/badge.svg)](https://codecov.io/gh/opd-ai/store)
+[![Go Report Card](https://goreportcard.com/badge/github.com/opd-ai/store)](https://goreportcard.com/report/github.com/opd-ai/store)
+
 A self-hosted cryptocurrency payment store with pluggable fulfillment handlers. Integrates with **opd-ai/paywall** for Bitcoin/Monero payments and provides a flexible, extensible system for selling digital goods, physical products, print-on-demand items, or anything custom.
 
 ## Features

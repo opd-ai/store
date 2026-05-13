@@ -33,3 +33,10 @@ go.work.sum
 tmp
 *.txt
 /store
+
+# Keep directory structure but ignore uploads
+data/uploads/*
+!data/uploads/.gitkeep
+
+# Keep templates directory
+!templates/.gitkeep
