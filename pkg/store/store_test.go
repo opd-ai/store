@@ -2,44 +2,50 @@ package store_test
 
 import (
 	"context"
+	"os"
 	"testing"
 
+	bolt "go.etcd.io/bbolt"
+
 	"github.com/opd-ai/store/internal/handlers"
+	"github.com/opd-ai/store/pkg/db"
 	"github.com/opd-ai/store/pkg/handler"
 	"github.com/opd-ai/store/pkg/models"
 	"github.com/opd-ai/store/pkg/store"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
-// setupTestDB creates an in-memory SQLite database for testing.
-func setupTestDB(t *testing.T) *gorm.DB {
+// setupTestDB creates an in-memory BoltDB database for testing.
+func setupTestDB(t *testing.T) *bolt.DB {
 	t.Helper()
 
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	// Create a temporary database file
+	tmpFile := "/tmp/test_store_" + t.Name() + ".db"
+	t.Cleanup(func() {
+		os.Remove(tmpFile)
+	})
+
+	boltDB, err := bolt.Open(tmpFile, 0600, nil)
 	if err != nil {
 		t.Fatalf("failed to open test database: %v", err)
 	}
 
-	// Auto-migrate tables
-	if err := db.AutoMigrate(
-		&models.Category{},
-		&models.Tag{},
-		&models.Item{},
-		&models.Payment{},
-		&models.FormSubmission{},
-	); err != nil {
-		t.Fatalf("failed to migrate database: %v", err)
+	// Initialize buckets
+	if err := db.InitBuckets(boltDB); err != nil {
+		t.Fatalf("failed to initialize buckets: %v", err)
 	}
 
-	return db
+	t.Cleanup(func() {
+		boltDB.Close()
+	})
+
+	return boltDB
 }
 
 // setupTestStore creates a Store instance with test database and registry.
 func setupTestStore(t *testing.T) *store.Store {
 	t.Helper()
 
-	db := setupTestDB(t)
+	boltDB := setupTestDB(t)
 	reg := handler.NewRegistry()
 
 	// Register test handlers
@@ -48,7 +54,7 @@ func setupTestStore(t *testing.T) *store.Store {
 	reg.Register(handlers.NewPrintOnDemandHandler())
 	reg.Register(handlers.NewCustomHandler())
 
-	return store.NewStore(db, reg)
+	return store.NewStore(boltDB, reg)
 }
 
 // TestCreatePayment tests payment creation.

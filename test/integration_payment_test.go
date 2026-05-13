@@ -12,34 +12,36 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	bolt "go.etcd.io/bbolt"
+
 	"github.com/opd-ai/store/internal/api"
+	"github.com/opd-ai/store/pkg/db"
 	"github.com/opd-ai/store/pkg/handler"
 	"github.com/opd-ai/store/pkg/models"
 	"github.com/opd-ai/store/pkg/paywall"
 	"github.com/opd-ai/store/pkg/store"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // setupIntegrationTest creates test infrastructure for integration tests
-func setupIntegrationTest(t *testing.T) (*api.Handler, *gorm.DB, *store.Store, *mux.Router) {
-	// Create in-memory database
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+func setupIntegrationTest(t *testing.T) (*api.Handler, *bolt.DB, *store.Store, *mux.Router) {
+	// Create temporary database
+	tmpFile := "/tmp/test_integration_" + t.Name() + ".db"
+	t.Cleanup(func() {
+		os.Remove(tmpFile)
+	})
+
+	boltDB, err := bolt.Open(tmpFile, 0600, nil)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
 
-	// Run migrations
-	err = db.AutoMigrate(
-		&models.Category{},
-		&models.Item{},
-		&models.Tag{},
-		&models.Payment{},
-		&models.FormSubmission{},
-		&models.DownloadLog{},
-	)
-	if err != nil {
-		t.Fatalf("Failed to run migrations: %v", err)
+	t.Cleanup(func() {
+		boltDB.Close()
+	})
+
+	// Initialize buckets
+	if err := db.InitBuckets(boltDB); err != nil {
+		t.Fatalf("Failed to initialize buckets: %v", err)
 	}
 
 	// Create handler registry with mock handler
@@ -52,7 +54,7 @@ func setupIntegrationTest(t *testing.T) (*api.Handler, *gorm.DB, *store.Store, *
 	}
 
 	// Create store
-	s := store.NewStore(db, reg)
+	s := store.NewStore(boltDB, reg)
 
 	// Create mock paywall client (for integration tests, we still mock external services)
 	paywallClient := paywall.NewClient("http://test-paywall", "test-api-key")
@@ -80,26 +82,24 @@ func setupIntegrationTest(t *testing.T) (*api.Handler, *gorm.DB, *store.Store, *
 	r.HandleFunc("/admin/items", h.CreateItem).Methods("POST")
 	r.HandleFunc("/admin/items", h.ListItems).Methods("GET")
 
-	return h, db, s, r
+	return h, boltDB, s, r
 }
 
-// For methods not directly available in store, use GORM db.Create()
-func createCategory(db *gorm.DB, name, description string) *models.Category {
-	cat := models.NewCategory(name, description)
-	db.Create(cat)
+// Helper functions for creating test data
+func createCategory(s *store.Store, name, description string) *models.Category {
+	cat, _ := s.CreateCategory(context.Background(), name, description)
 	return cat
 }
 
-func createItem(db *gorm.DB, categoryID, name, description, price, currency, backendType string, config models.JSONMap) *models.Item {
+func createItem(s *store.Store, categoryID, name, description, price, currency, backendType string, config models.JSONMap) *models.Item {
 	item := models.NewItem(categoryID, name, description, price, currency, backendType)
 	item.BackendConfig = config
-	db.Create(item)
+	s.CreateItem(context.Background(), item)
 	return item
 }
 
-func createPayment(db *gorm.DB, itemID, amount, currency string) *models.Payment {
-	payment := models.NewPayment(itemID, amount, currency)
-	db.Create(payment)
+func createPayment(s *store.Store, itemID, amount, currency string) *models.Payment {
+	payment, _ := s.CreatePayment(context.Background(), itemID, amount, currency)
 	return payment
 }
 
@@ -141,14 +141,14 @@ func TestPaymentFlow_EndToEnd(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-admin-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	_, db, s, r := setupIntegrationTest(t)
+	_, _, s, r := setupIntegrationTest(t)
 	ctx := context.Background()
 
 	// Step 1: Create a category
-	category := createCategory(db, "Electronics", "Electronic items")
+	category := createCategory(s, "Electronics", "Electronic items")
 
 	// Step 2: Create an item
-	item := createItem(db, category.ID, "Laptop", "High-end laptop", "1000.00", "BTC", "mock", models.JSONMap{
+	item := createItem(s, category.ID, "Laptop", "High-end laptop", "1000.00", "BTC", "mock", models.JSONMap{
 		"test_field": "value",
 	})
 
@@ -179,7 +179,7 @@ func TestPaymentFlow_EndToEnd(t *testing.T) {
 	}
 
 	// Step 5: Create payment (simulate checkout)
-	payment := createPayment(db, item.ID, "1000.00", "BTC")
+	payment := createPayment(s, item.ID, "1000.00", "BTC")
 
 	if payment.Status != "pending" {
 		t.Errorf("Expected payment status pending, got %s", payment.Status)
@@ -281,15 +281,15 @@ func TestPaymentFlow_WithFormSubmission(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-admin-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	_, db, s, r := setupIntegrationTest(t)
+	_, _, s, r := setupIntegrationTest(t)
 	ctx := context.Background()
 
 	// Create category and item
-	category := createCategory(db, "Physical", "Physical items")
-	item := createItem(db, category.ID, "T-Shirt", "Custom t-shirt", "25.00", "BTC", "mock", models.JSONMap{})
+	category := createCategory(s, "Physical", "Physical items")
+	item := createItem(s, category.ID, "T-Shirt", "Custom t-shirt", "25.00", "BTC", "mock", models.JSONMap{})
 
 	// Create payment
-	payment := createPayment(db, item.ID, "25.00", "BTC")
+	payment := createPayment(s, item.ID, "25.00", "BTC")
 
 	// Confirm payment
 	err := s.ConfirmPayment(ctx, payment.ID, "payment_hash_456")
@@ -314,10 +314,9 @@ func TestPaymentFlow_WithFormSubmission(t *testing.T) {
 	}
 
 	// Verify form was stored
-	var submission models.FormSubmission
-	err = db.Where("payment_id = ?", payment.ID).First(&submission).Error
+	submission, err := s.GetFormSubmission(ctx, payment.ID)
 	if err != nil {
-		t.Errorf("Form submission not found in database: %v", err)
+		t.Errorf("Form submission not found: %v", err)
 	}
 
 	if submission.FormData["name"] != "John Doe" {
@@ -344,18 +343,18 @@ func TestPaymentFlow_WithFormSubmission(t *testing.T) {
 
 // TestPaymentFlow_DigitalDownload tests digital media download flow
 func TestPaymentFlow_DigitalDownload(t *testing.T) {
-	_, db, s, r := setupIntegrationTest(t)
+	_, _, s, r := setupIntegrationTest(t)
 	ctx := context.Background()
 
 	// Create digital item with download limit
-	category := createCategory(db, "Digital", "Digital items")
-	item := createItem(db, category.ID, "E-Book", "Digital book", "10.00", "BTC", "mock", models.JSONMap{
+	category := createCategory(s, "Digital", "Digital items")
+	item := createItem(s, category.ID, "E-Book", "Digital book", "10.00", "BTC", "mock", models.JSONMap{
 		"max_downloads": float64(3),
 		"download_url":  "https://example.com/download/ebook.pdf",
 	})
 
 	// Create and confirm payment
-	payment := createPayment(db, item.ID, "10.00", "BTC")
+	payment := createPayment(s, item.ID, "10.00", "BTC")
 	s.ConfirmPayment(ctx, payment.ID, "hash_789")
 
 	// Fulfill payment
@@ -376,8 +375,10 @@ func TestPaymentFlow_DigitalDownload(t *testing.T) {
 	}
 
 	// Verify download count
-	var downloadCount int64
-	db.Model(&models.DownloadLog{}).Where("payment_id = ?", payment.ID).Count(&downloadCount)
+	downloadCount, err := s.GetDownloadCount(ctx, payment.ID)
+	if err != nil {
+		t.Errorf("Failed to get download count: %v", err)
+	}
 	if downloadCount != 3 {
 		t.Errorf("Expected 3 downloads, got %d", downloadCount)
 	}
@@ -396,15 +397,15 @@ func TestPaymentFlow_DigitalDownload(t *testing.T) {
 
 // TestPaymentFlow_ExpiredDownload tests download expiration
 func TestPaymentFlow_ExpiredDownload(t *testing.T) {
-	_, db, s, r := setupIntegrationTest(t)
+	_, _, s, r := setupIntegrationTest(t)
 	ctx := context.Background()
 
 	// Create digital item
-	category := createCategory(db, "Digital", "Digital items")
-	item := createItem(db, category.ID, "E-Book", "Digital book", "10.00", "BTC", "mock", models.JSONMap{})
+	category := createCategory(s, "Digital", "Digital items")
+	item := createItem(s, category.ID, "E-Book", "Digital book", "10.00", "BTC", "mock", models.JSONMap{})
 
 	// Create and confirm payment
-	payment := createPayment(db, item.ID, "10.00", "BTC")
+	payment := createPayment(s, item.ID, "10.00", "BTC")
 	s.ConfirmPayment(ctx, payment.ID, "hash_exp")
 	s.FulfillPayment(ctx, payment.ID)
 
@@ -430,15 +431,15 @@ func TestPaymentFlow_ListPayments(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-admin-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	_, db, s, r := setupIntegrationTest(t)
+	_, _, s, r := setupIntegrationTest(t)
 	ctx := context.Background()
 
 	// Create multiple payments
-	category := createCategory(db, "Test", "Test")
-	item := createItem(db, category.ID, "Item", "Test item", "10.00", "BTC", "mock", models.JSONMap{})
+	category := createCategory(s, "Test", "Test")
+	item := createItem(s, category.ID, "Item", "Test item", "10.00", "BTC", "mock", models.JSONMap{})
 
 	for i := 0; i < 5; i++ {
-		payment := createPayment(db, item.ID, "10.00", "BTC")
+		payment := createPayment(s, item.ID, "10.00", "BTC")
 		if i%2 == 0 {
 			s.ConfirmPayment(ctx, payment.ID, "hash_"+string(rune(i)))
 		}
@@ -510,22 +511,18 @@ func TestPaymentFlow_CheckoutEndpoint(t *testing.T) {
 	defer mockPaywall.Close()
 
 	// Create test infrastructure with mock paywall URL
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	tmpFile := "/tmp/test_int_" + t.Name() + ".db"
+	t.Cleanup(func() { os.Remove(tmpFile) })
+	boltDB, err := bolt.Open(tmpFile, 0600, nil)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
 
-	err = db.AutoMigrate(
-		&models.Category{},
-		&models.Item{},
-		&models.Tag{},
-		&models.Payment{},
-		&models.FormSubmission{},
-		&models.DownloadLog{},
-	)
-	if err != nil {
-		t.Fatalf("Failed to run migrations: %v", err)
+	if err := db.InitBuckets(boltDB); err != nil {
+		t.Fatalf("Failed to initialize buckets: %v", err)
 	}
+
+	t.Cleanup(func() { boltDB.Close() })
 
 	reg := handler.NewRegistry()
 	mockHandler := &testIntegrationHandler{handlerType: "mock"}
@@ -533,7 +530,7 @@ func TestPaymentFlow_CheckoutEndpoint(t *testing.T) {
 		t.Fatalf("Failed to register handler: %v", err)
 	}
 
-	s := store.NewStore(db, reg)
+	s := store.NewStore(boltDB, reg)
 	paywallClient := paywall.NewClient(mockPaywall.URL, "test-api-key")
 	h := api.NewHandler(s, paywallClient)
 
@@ -546,8 +543,8 @@ func TestPaymentFlow_CheckoutEndpoint(t *testing.T) {
 	ctx := context.Background()
 
 	// Create category and item
-	category := createCategory(db, "Test Products", "Test category")
-	item := createItem(db, category.ID, "Test Product", "A test product", "50.00", "BTC", "mock", models.JSONMap{})
+	category := createCategory(s, "Test Products", "Test category")
+	item := createItem(s, category.ID, "Test Product", "A test product", "50.00", "BTC", "mock", models.JSONMap{})
 
 	// POST to /api/checkout
 	checkoutReq := map[string]string{
@@ -616,7 +613,7 @@ func TestPaymentFlow_CheckoutEndpoint(t *testing.T) {
 }
 
 // setupTestWithHandlers creates test infrastructure with real handlers
-func setupTestWithHandlers(t *testing.T) (*api.Handler, *gorm.DB, *store.Store, *mux.Router, *httptest.Server) {
+func setupTestWithHandlers(t *testing.T) (*api.Handler, *bolt.DB, *store.Store, *mux.Router, *httptest.Server) {
 	// Create mock paywall server
 	mockPaywall := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/create-payment" {
@@ -642,23 +639,19 @@ func setupTestWithHandlers(t *testing.T) (*api.Handler, *gorm.DB, *store.Store, 
 	}))
 
 	// Create in-memory database
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	tmpFile := "/tmp/test_int_" + t.Name() + ".db"
+	t.Cleanup(func() { os.Remove(tmpFile) })
+	boltDB, err := bolt.Open(tmpFile, 0600, nil)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
 
 	// Run migrations
-	err = db.AutoMigrate(
-		&models.Category{},
-		&models.Item{},
-		&models.Tag{},
-		&models.Payment{},
-		&models.FormSubmission{},
-		&models.DownloadLog{},
-	)
-	if err != nil {
-		t.Fatalf("Failed to run migrations: %v", err)
+	if err := db.InitBuckets(boltDB); err != nil {
+		t.Fatalf("Failed to initialize buckets: %v", err)
 	}
+
+	t.Cleanup(func() { boltDB.Close() })
 
 	// Create handler registry with real handlers
 	reg := handler.NewRegistry()
@@ -675,7 +668,7 @@ func setupTestWithHandlers(t *testing.T) (*api.Handler, *gorm.DB, *store.Store, 
 	}
 
 	// Create store
-	s := store.NewStore(db, reg)
+	s := store.NewStore(boltDB, reg)
 
 	// Create mock paywall client with mock server URL
 	paywallClient := paywall.NewClient(mockPaywall.URL, "test-api-key")
@@ -703,7 +696,7 @@ func setupTestWithHandlers(t *testing.T) (*api.Handler, *gorm.DB, *store.Store, 
 	r.HandleFunc("/admin/items", h.CreateItem).Methods("POST")
 	r.HandleFunc("/admin/items", h.ListItems).Methods("GET")
 
-	return h, db, s, r, mockPaywall
+	return h, boltDB, s, r, mockPaywall
 }
 
 // Test handler implementations that mimic real behavior
@@ -858,13 +851,13 @@ func TestPaymentFlow_DigitalMediaHandlerEndToEnd(t *testing.T) {
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 	defer os.Unsetenv("STORE_PUBLIC_URL")
 
-	_, db, s, r, mockPaywall := setupTestWithHandlers(t)
+	_, _, s, r, mockPaywall := setupTestWithHandlers(t)
 	defer mockPaywall.Close()
 	ctx := context.Background()
 
 	// Create item with digital_media backend
-	category := createCategory(db, "Digital", "Digital products")
-	item := createItem(db, category.ID, "E-Book", "Test e-book", "10.00", "BTC", "digital_media", models.JSONMap{
+	category := createCategory(s, "Digital", "Digital products")
+	item := createItem(s, category.ID, "E-Book", "Test e-book", "10.00", "BTC", "digital_media", models.JSONMap{
 		"storage":          "local",
 		"file_path":        "/downloads/ebook.pdf",
 		"expiration_hours": 24,
@@ -923,13 +916,13 @@ func TestPaymentFlow_ShippingFormHandlerEndToEnd(t *testing.T) {
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 	defer os.Unsetenv("STORE_PUBLIC_URL")
 
-	_, db, s, r, mockPaywall := setupTestWithHandlers(t)
+	_, _, s, r, mockPaywall := setupTestWithHandlers(t)
 	defer mockPaywall.Close()
 	ctx := context.Background()
 
 	// Create item with shipping_form backend
-	category := createCategory(db, "Physical", "Physical products")
-	item := createItem(db, category.ID, "T-Shirt", "Custom t-shirt", "25.00", "BTC", "shipping_form", models.JSONMap{})
+	category := createCategory(s, "Physical", "Physical products")
+	item := createItem(s, category.ID, "T-Shirt", "Custom t-shirt", "25.00", "BTC", "shipping_form", models.JSONMap{})
 
 	// Checkout
 	checkoutReq := map[string]string{"item_id": item.ID, "email": "buyer@example.com"}
@@ -1001,13 +994,13 @@ func TestPaymentFlow_PODHandlerEndToEnd(t *testing.T) {
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 	defer os.Unsetenv("STORE_PUBLIC_URL")
 
-	_, db, s, r, mockPaywall := setupTestWithHandlers(t)
+	_, _, s, r, mockPaywall := setupTestWithHandlers(t)
 	defer mockPaywall.Close()
 	ctx := context.Background()
 
 	// Create item with pod backend
-	category := createCategory(db, "Apparel", "Print on demand apparel")
-	item := createItem(db, category.ID, "Custom Mug", "Custom printed mug", "15.00", "BTC", "pod", models.JSONMap{
+	category := createCategory(s, "Apparel", "Print on demand apparel")
+	item := createItem(s, category.ID, "Custom Mug", "Custom printed mug", "15.00", "BTC", "pod", models.JSONMap{
 		"provider":   "printful",
 		"product_id": "PROD-123",
 		"variant_id": "VAR-456",
@@ -1090,13 +1083,13 @@ func TestPaymentFlow_CustomHandlerEndToEnd(t *testing.T) {
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 	defer os.Unsetenv("STORE_PUBLIC_URL")
 
-	_, db, s, r, mockPaywall := setupTestWithHandlers(t)
+	_, _, s, r, mockPaywall := setupTestWithHandlers(t)
 	defer mockPaywall.Close()
 	ctx := context.Background()
 
 	// Create item with custom backend
-	category := createCategory(db, "Services", "Custom services")
-	item := createItem(db, category.ID, "Consultation", "1-hour consultation", "100.00", "BTC", "custom", models.JSONMap{
+	category := createCategory(s, "Services", "Custom services")
+	item := createItem(s, category.ID, "Consultation", "1-hour consultation", "100.00", "BTC", "custom", models.JSONMap{
 		"webhook_url": "https://example.com/webhook/fulfill",
 		"method":      "POST",
 	})

@@ -157,28 +157,27 @@ func TestNewItem(t *testing.T) {
 
 // TestJSONMapScanValue tests JSONMap Scan and Value methods.
 func TestJSONMapScanValue(t *testing.T) {
-	// Test Value (Marshal)
+	// Test MarshalJSON
 	original := models.JSONMap{
 		"key1": "value1",
 		"key2": float64(123),
 		"key3": true,
 	}
 
-	value, err := original.Value()
+	bytes, err := original.MarshalJSON()
 	if err != nil {
-		t.Errorf("Value() error: %v", err)
+		t.Errorf("MarshalJSON() error: %v", err)
 	}
 
-	bytes, ok := value.([]byte)
-	if !ok {
-		t.Error("Value() should return []byte")
+	if len(bytes) == 0 {
+		t.Error("MarshalJSON() should return non-empty []byte")
 	}
 
-	// Test Scan (Unmarshal)
+	// Test UnmarshalJSON
 	var scanned models.JSONMap
-	err = scanned.Scan(bytes)
+	err = scanned.UnmarshalJSON(bytes)
 	if err != nil {
-		t.Errorf("Scan() error: %v", err)
+		t.Errorf("UnmarshalJSON() error: %v", err)
 	}
 
 	if scanned["key1"] != "value1" {

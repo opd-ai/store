@@ -12,13 +12,12 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
+	bolt "go.etcd.io/bbolt"
 
 	"github.com/opd-ai/store/internal/api"
 	"github.com/opd-ai/store/internal/handlers"
+	"github.com/opd-ai/store/pkg/db"
 	"github.com/opd-ai/store/pkg/handler"
-	"github.com/opd-ai/store/pkg/models"
 	"github.com/opd-ai/store/pkg/paywall"
 	"github.com/opd-ai/store/pkg/store"
 )
@@ -33,25 +32,19 @@ func main() {
 	}
 
 	// Initialize database
-	db, err := initDatabase()
+	boltDB, err := initDatabase()
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
+	defer boltDB.Close()
 
-	// Auto-migrate models
-	if err := db.AutoMigrate(
-		&models.Category{},
-		&models.Tag{},
-		&models.Item{},
-		&models.Payment{},
-		&models.FormSubmission{},
-		&models.DownloadLog{},
-	); err != nil {
-		log.Fatalf("Failed to run migrations: %v", err)
+	// Initialize buckets
+	if err := db.InitBuckets(boltDB); err != nil {
+		log.Fatalf("Failed to initialize database buckets: %v", err)
 	}
 
 	// Initialize services
-	apiHandler := initializeServices(db)
+	apiHandler := initializeServices(boltDB)
 
 	// Setup router with all endpoints
 	router := setupRouter(apiHandler)
@@ -75,7 +68,7 @@ func main() {
 }
 
 // initializeServices sets up the store service, paywall client, and API handler.
-func initializeServices(db *gorm.DB) *api.Handler {
+func initializeServices(boltDB *bolt.DB) *api.Handler {
 	// Initialize handler registry
 	registry := handler.NewRegistry()
 	if err := registerHandlers(registry); err != nil {
@@ -83,7 +76,7 @@ func initializeServices(db *gorm.DB) *api.Handler {
 	}
 
 	// Initialize store service
-	storeService := store.NewStore(db, registry)
+	storeService := store.NewStore(boltDB, registry)
 
 	// Initialize paywall client
 	paywallURL := os.Getenv("STORE_PAYWALL_URL")
@@ -192,18 +185,23 @@ func ensureDirectories() error {
 }
 
 // initDatabase initializes the database connection.
-func initDatabase() (*gorm.DB, error) {
-	dsn := os.Getenv("STORE_DATABASE_URL")
-	if dsn == "" {
-		return nil, fmt.Errorf("STORE_DATABASE_URL not set")
+func initDatabase() (*bolt.DB, error) {
+	dbPath := os.Getenv("STORE_DATABASE_PATH")
+	if dbPath == "" {
+		dbPath = "./data/store.db"
 	}
 
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	// Ensure the data directory exists
+	if err := os.MkdirAll("./data", 0755); err != nil {
+		return nil, fmt.Errorf("failed to create data directory: %w", err)
+	}
+
+	boltDB, err := bolt.Open(dbPath, 0600, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
+		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	return db, nil
+	return boltDB, nil
 }
 
 // registerHandlers registers all fulfillment handlers.

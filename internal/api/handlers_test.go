@@ -10,36 +10,38 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	bolt "go.etcd.io/bbolt"
+
+	"github.com/opd-ai/store/pkg/db"
 	"github.com/opd-ai/store/pkg/handler"
 	"github.com/opd-ai/store/pkg/models"
 	"github.com/opd-ai/store/pkg/paywall"
 	"github.com/opd-ai/store/pkg/store"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
-// setupTestDB creates an in-memory SQLite database for testing
-func setupTestDB(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+// setupTestDB creates a temporary BoltDB database for testing
+func setupTestDB(t *testing.T) *bolt.DB {
+	tmpFile := "/tmp/test_api_" + t.Name() + ".db"
+	t.Cleanup(func() {
+		os.Remove(tmpFile)
+	})
+
+	boltDB, err := bolt.Open(tmpFile, 0600, nil)
 	if err != nil {
 		t.Fatalf("failed to create test database: %v", err)
 	}
 
-	// Run migrations
-	if err := db.AutoMigrate(
-		&models.Category{},
-		&models.Tag{},
-		&models.Item{},
-		&models.Payment{},
-		&models.FormSubmission{},
-		&models.DownloadLog{},
-	); err != nil {
-		t.Fatalf("failed to run migrations: %v", err)
+	t.Cleanup(func() {
+		boltDB.Close()
+	})
+
+	// Initialize buckets
+	if err := db.InitBuckets(boltDB); err != nil {
+		t.Fatalf("failed to initialize buckets: %v", err)
 	}
 
-	return db
+	return boltDB
 }
 
 // mockHandler is a simple handler for testing
@@ -103,7 +105,7 @@ func (m *mockPaywallClient) VerifyWebhook(signature string, payload []byte, secr
 }
 
 // setupTestHandler creates a handler with test database and mock paywall
-func setupTestHandler(t *testing.T) (*Handler, *gorm.DB) {
+func setupTestHandler(t *testing.T) (*Handler, *store.Store) {
 	db := setupTestDB(t)
 
 	reg := handler.NewRegistry()
@@ -118,7 +120,7 @@ func setupTestHandler(t *testing.T) (*Handler, *gorm.DB) {
 
 	h := NewHandler(s, paywallClient)
 
-	return h, db
+	return h, s
 }
 
 // TestHealthHandler tests the health check endpoint
@@ -212,11 +214,13 @@ func TestRequireAdminToken(t *testing.T) {
 
 // TestGetCatalog tests catalog retrieval
 func TestGetCatalog(t *testing.T) {
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
 	// Create test data
-	cat := models.NewCategory("Test Category", "Test desc")
-	db.Create(cat)
+	_, err := s.CreateCategory(context.Background(), "Test Category", "Test desc")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
 	w := httptest.NewRecorder()
@@ -239,14 +243,19 @@ func TestGetCatalog(t *testing.T) {
 
 // TestGetItem tests item retrieval
 func TestGetItem(t *testing.T) {
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
 	// Create test data
-	cat := models.NewCategory("Test Cat", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test Cat", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 
 	item := models.NewItem(cat.ID, "Test Item", "Test", "10.00", "BTC", "mock")
-	db.Create(item)
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/items/"+item.ID, nil)
 	req = mux.SetURLVars(req, map[string]string{"id": item.ID})
@@ -286,18 +295,23 @@ func TestGetItem_NotFound(t *testing.T) {
 // TestCreateCheckout tests checkout flow
 func TestCreateCheckout(t *testing.T) {
 	t.Skip("Skipping - requires paywall service mock")
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
 	// Set required env vars
 	os.Setenv("STORE_PUBLIC_URL", "http://localhost:8080")
 	defer os.Unsetenv("STORE_PUBLIC_URL")
 
 	// Create test data
-	cat := models.NewCategory("Test Cat", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test Cat", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 
 	item := models.NewItem(cat.ID, "Test Item", "Test", "10.00", "BTC", "mock")
-	db.Create(item)
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
 
 	reqBody := map[string]string{
 		"item_id": item.ID,
@@ -340,15 +354,22 @@ func TestCreateCheckout_InvalidJSON(t *testing.T) {
 
 // TestGetPaymentStatus tests payment status retrieval
 func TestGetPaymentStatus(t *testing.T) {
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 	item := models.NewItem(cat.ID, "Test", "Test", "10", "BTC", "mock")
-	db.Create(item)
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
 
-	payment := models.NewPayment(item.ID, "10.00", "BTC")
-	db.Create(payment)
+	payment, err := s.CreatePayment(context.Background(), item.ID, "10.00", "BTC")
+	if err != nil {
+		t.Fatalf("failed to create payment: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/payment/"+payment.ID+"/status", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": payment.ID})
@@ -363,15 +384,22 @@ func TestGetPaymentStatus(t *testing.T) {
 
 // TestSubmitPaymentForm tests form submission
 func TestSubmitPaymentForm(t *testing.T) {
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 	item := models.NewItem(cat.ID, "Test", "Test", "10", "BTC", "mock")
-	db.Create(item)
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
 
-	payment := models.NewPayment(item.ID, "10.00", "BTC")
-	db.Create(payment)
+	payment, err := s.CreatePayment(context.Background(), item.ID, "10.00", "BTC")
+	if err != nil {
+		t.Fatalf("failed to create payment: %v", err)
+	}
 
 	formData := map[string]interface{}{
 		"name":    "John Doe",
@@ -454,15 +482,22 @@ func TestConfirmPayment(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 	item := models.NewItem(cat.ID, "Test", "Test", "10", "BTC", "mock")
-	db.Create(item)
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
 
-	payment := models.NewPayment(item.ID, "10.00", "BTC")
-	db.Create(payment)
+	payment, err := s.CreatePayment(context.Background(), item.ID, "10.00", "BTC")
+	if err != nil {
+		t.Fatalf("failed to create payment: %v", err)
+	}
 
 	reqBody := map[string]string{
 		"payment_hash": "txhash123",
@@ -486,16 +521,26 @@ func TestFulfillPayment(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 	item := models.NewItem(cat.ID, "Test", "Test", "10", "BTC", "mock")
-	db.Create(item)
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
 
-	payment := models.NewPayment(item.ID, "10.00", "BTC")
-	payment.Status = "confirmed"
-	db.Create(payment)
+	payment, err := s.CreatePayment(context.Background(), item.ID, "10.00", "BTC")
+	if err != nil {
+		t.Fatalf("failed to create payment: %v", err)
+	}
+	err = s.ConfirmPayment(context.Background(), payment.ID, "txhash123")
+	if err != nil {
+		t.Fatalf("failed to confirm payment: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/payments/"+payment.ID+"/fulfill", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
@@ -538,10 +583,12 @@ func TestListCategories(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	_, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/categories", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
@@ -568,10 +615,12 @@ func TestUpdateCategory(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 
 	reqBody := map[string]interface{}{
 		"name":        "Updated Category",
@@ -596,10 +645,12 @@ func TestDeleteCategory(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/categories/"+cat.ID, nil)
 	req.Header.Set("X-Admin-Token", "test-token")
@@ -618,10 +669,12 @@ func TestCreateItem(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 
 	reqBody := map[string]interface{}{
 		"category_id":    cat.ID,
@@ -652,12 +705,17 @@ func TestListItems(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 	item := models.NewItem(cat.ID, "Test", "Test", "10", "BTC", "mock")
-	db.Create(item)
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/items", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
@@ -675,12 +733,17 @@ func TestUpdateItem(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 	item := models.NewItem(cat.ID, "Test", "Test", "10", "BTC", "mock")
-	db.Create(item)
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
 
 	reqBody := map[string]interface{}{
 		"name":  "Updated Item",
@@ -705,12 +768,17 @@ func TestDeleteItem(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 	item := models.NewItem(cat.ID, "Test", "Test", "10", "BTC", "mock")
-	db.Create(item)
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/items/"+item.ID, nil)
 	req.Header.Set("X-Admin-Token", "test-token")
@@ -752,10 +820,12 @@ func TestListTags(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	tag := models.NewTag("Test Tag")
-	db.Create(tag)
+	_, err := s.CreateTag(context.Background(), "Test Tag")
+	if err != nil {
+		t.Fatalf("failed to create tag: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/tags", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
@@ -773,10 +843,12 @@ func TestUpdateTag(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	tag := models.NewTag("Test")
-	db.Create(tag)
+	tag, err := s.CreateTag(context.Background(), "Test")
+	if err != nil {
+		t.Fatalf("failed to create tag: %v", err)
+	}
 
 	reqBody := map[string]string{"name": "Updated Tag"}
 	body, _ := json.Marshal(reqBody)
@@ -798,10 +870,12 @@ func TestDeleteTag(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	tag := models.NewTag("Test")
-	db.Create(tag)
+	tag, err := s.CreateTag(context.Background(), "Test")
+	if err != nil {
+		t.Fatalf("failed to create tag: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/tags/"+tag.ID, nil)
 	req.Header.Set("X-Admin-Token", "test-token")
@@ -820,14 +894,21 @@ func TestAddItemTag(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 	item := models.NewItem(cat.ID, "Test", "Test", "10", "BTC", "mock")
-	db.Create(item)
-	tag := models.NewTag("Test")
-	db.Create(tag)
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
+	tag, err := s.CreateTag(context.Background(), "Test")
+	if err != nil {
+		t.Fatalf("failed to create tag: %v", err)
+	}
 
 	reqBody := map[string]string{"tag_id": tag.ID}
 	body, _ := json.Marshal(reqBody)
@@ -849,17 +930,27 @@ func TestRemoveItemTag(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 	item := models.NewItem(cat.ID, "Test", "Test", "10", "BTC", "mock")
-	db.Create(item)
-	tag := models.NewTag("Test")
-	db.Create(tag)
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
+	tag, err := s.CreateTag(context.Background(), "Test")
+	if err != nil {
+		t.Fatalf("failed to create tag: %v", err)
+	}
 
 	// Add tag first
-	db.Model(item).Association("Tags").Append(tag)
+	err = s.AddItemTag(context.Background(), item.ID, tag.ID)
+	if err != nil {
+		t.Fatalf("failed to add tag to item: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/items/"+item.ID+"/tags/"+tag.ID, nil)
 	req.Header.Set("X-Admin-Token", "test-token")
@@ -875,18 +966,36 @@ func TestRemoveItemTag(t *testing.T) {
 
 // TestTrackDownload tests download tracking
 func TestTrackDownload(t *testing.T) {
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 	item := models.NewItem(cat.ID, "Test", "Test", "10", "BTC", "mock")
 	item.BackendConfig = models.JSONMap{"max_downloads": float64(5)}
-	db.Create(item)
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
 
-	payment := models.NewPayment(item.ID, "10.00", "BTC")
-	payment.Status = "fulfilled"
-	payment.FulfillmentResult = models.JSONMap{"expires_at": time.Now().Add(1 * time.Hour).Format(time.RFC3339)}
-	db.Create(payment)
+	payment, err := s.CreatePayment(context.Background(), item.ID, "10.00", "BTC")
+	if err != nil {
+		t.Fatalf("failed to create payment: %v", err)
+	}
+	err = s.ConfirmPayment(context.Background(), payment.ID, "txhash")
+	if err != nil {
+		t.Fatalf("failed to confirm payment: %v", err)
+	}
+	err = s.FulfillPayment(context.Background(), payment.ID)
+	if err != nil {
+		t.Fatalf("failed to fulfill payment: %v", err)
+	}
+	// Reload payment to get updated fulfillment result
+	payment, err = s.GetPayment(context.Background(), payment.ID)
+	if err != nil {
+		t.Fatalf("failed to get payment: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/payment/"+payment.ID+"/track-download", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": payment.ID})
@@ -901,16 +1010,22 @@ func TestTrackDownload(t *testing.T) {
 
 // TestTrackDownload_NotFulfilled tests download on unfulfilled payment
 func TestTrackDownload_NotFulfilled(t *testing.T) {
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 	item := models.NewItem(cat.ID, "Test", "Test", "10", "BTC", "mock")
-	db.Create(item)
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
 
-	payment := models.NewPayment(item.ID, "10.00", "BTC")
-	payment.Status = "pending"
-	db.Create(payment)
+	payment, err := s.CreatePayment(context.Background(), item.ID, "10.00", "BTC")
+	if err != nil {
+		t.Fatalf("failed to create payment: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/payment/"+payment.ID+"/track-download", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": payment.ID})
@@ -1019,17 +1134,30 @@ func TestLoggingMiddleware(t *testing.T) {
 // TestGetOrderStatus tests order status retrieval
 func TestGetOrderStatus(t *testing.T) {
 	t.Skip("Skipped - error handling does not match implementation")
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 	item := models.NewItem(cat.ID, "Test", "Test", "10", "BTC", "mock")
-	db.Create(item)
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
 
-	payment := models.NewPayment(item.ID, "10.00", "BTC")
-	payment.Status = "fulfilled"
-	payment.FulfillmentResult = models.JSONMap{"tracking_number": "12345"}
-	db.Create(payment)
+	payment, err := s.CreatePayment(context.Background(), item.ID, "10.00", "BTC")
+	if err != nil {
+		t.Fatalf("failed to create payment: %v", err)
+	}
+	err = s.ConfirmPayment(context.Background(), payment.ID, "txhash")
+	if err != nil {
+		t.Fatalf("failed to confirm payment: %v", err)
+	}
+	err = s.FulfillPayment(context.Background(), payment.ID)
+	if err != nil {
+		t.Fatalf("failed to fulfill payment: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/order/"+payment.ID+"/status", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": payment.ID})
@@ -1293,10 +1421,12 @@ func TestAddItemTag_ItemNotFound(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	tag := models.NewTag("Test")
-	db.Create(tag)
+	tag, err := s.CreateTag(context.Background(), "Test")
+	if err != nil {
+		t.Fatalf("failed to create tag: %v", err)
+	}
 
 	reqBody := map[string]string{"tag_id": tag.ID}
 	body, _ := json.Marshal(reqBody)
@@ -1319,10 +1449,12 @@ func TestRemoveItemTag_ItemNotFound(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	tag := models.NewTag("Test")
-	db.Create(tag)
+	tag, err := s.CreateTag(context.Background(), "Test")
+	if err != nil {
+		t.Fatalf("failed to create tag: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/items/nonexistent/tags/"+tag.ID, nil)
 	req.Header.Set("X-Admin-Token", "test-token")
@@ -1342,12 +1474,17 @@ func TestRemoveItemTag_TagNotFound(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 	item := models.NewItem(cat.ID, "Test", "Test", "10", "BTC", "mock")
-	db.Create(item)
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/items/"+item.ID+"/tags/nonexistent", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
@@ -1378,28 +1515,37 @@ func TestTrackDownload_PaymentNotFound(t *testing.T) {
 
 // TestTrackDownload_MaxDownloadsExceeded tests exceeding download limit
 func TestTrackDownload_MaxDownloadsExceeded(t *testing.T) {
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 	item := models.NewItem(cat.ID, "Test", "Test", "10", "BTC", "mock")
 	item.BackendConfig = models.JSONMap{"max_downloads": float64(1)}
-	db.Create(item)
-
-	payment := models.NewPayment(item.ID, "10.00", "BTC")
-	payment.Status = "fulfilled"
-	payment.FulfillmentResult = models.JSONMap{"expires_at": time.Now().Add(1 * time.Hour).Format(time.RFC3339)}
-	db.Create(payment)
-
-	// Create a download log entry to simulate one download already happened
-	dl := &models.DownloadLog{
-		ID:           uuid.New().String(),
-		PaymentID:    payment.ID,
-		IPAddress:    "127.0.0.1",
-		UserAgent:    "Test",
-		DownloadedAt: time.Now(),
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
 	}
-	db.Create(dl)
+
+	payment, err := s.CreatePayment(context.Background(), item.ID, "10.00", "BTC")
+	if err != nil {
+		t.Fatalf("failed to create payment: %v", err)
+	}
+	err = s.ConfirmPayment(context.Background(), payment.ID, "txhash")
+	if err != nil {
+		t.Fatalf("failed to confirm payment: %v", err)
+	}
+	err = s.FulfillPayment(context.Background(), payment.ID)
+	if err != nil {
+		t.Fatalf("failed to fulfill payment: %v", err)
+	}
+
+	// Record one download to simulate one download already happened
+	err = s.RecordDownload(context.Background(), payment.ID, "127.0.0.1", "Test")
+	if err != nil {
+		t.Fatalf("failed to record download: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/payment/"+payment.ID+"/track-download", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": payment.ID})
@@ -1415,18 +1561,25 @@ func TestTrackDownload_MaxDownloadsExceeded(t *testing.T) {
 // TestTrackDownload_Expired tests downloading expired content
 func TestTrackDownload_Expired(t *testing.T) {
 	t.Skip("Skipped - error handling does not match implementation")
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Test", "Test")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Test", "Test")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 	item := models.NewItem(cat.ID, "Test", "Test", "10", "BTC", "mock")
 	item.BackendConfig = models.JSONMap{"max_downloads": float64(5)}
-	db.Create(item)
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
 
-	payment := models.NewPayment(item.ID, "10.00", "BTC")
-	payment.Status = "fulfilled"
-	payment.FulfillmentResult = models.JSONMap{"expires_at": time.Now().Add(-1 * time.Hour).Format(time.RFC3339)}
-	db.Create(payment)
+	payment, err := s.CreatePayment(context.Background(), item.ID, "10.00", "BTC")
+	if err != nil {
+		t.Fatalf("failed to create payment: %v", err)
+	}
+	// Note: We can't easily set an expired FulfillmentResult without calling FulfillPayment
+	// This test might need refactoring to work with the new store layer
 
 	req := httptest.NewRequest(http.MethodPost, "/api/payment/"+payment.ID+"/track-download", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": payment.ID})
@@ -1503,12 +1656,17 @@ func TestFulfillPayment_PaymentNotFound(t *testing.T) {
 
 // TestGetCatalog_WithFilters tests catalog with category filter
 func TestGetCatalog_WithFilters(t *testing.T) {
-	h, db := setupTestHandler(t)
+	h, s := setupTestHandler(t)
 
-	cat := models.NewCategory("Electronics", "Electronics")
-	db.Create(cat)
+	cat, err := s.CreateCategory(context.Background(), "Electronics", "Electronics")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
 	item := models.NewItem(cat.ID, "Laptop", "High-end laptop", "1000", "BTC", "mock")
-	db.Create(item)
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/catalog?category="+cat.ID, nil)
 	w := httptest.NewRecorder()

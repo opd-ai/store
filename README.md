@@ -11,16 +11,15 @@ A self-hosted cryptocurrency payment store with pluggable fulfillment handlers. 
 - **Pluggable Fulfillment Handlers** - Digital downloads, shipping forms, print-on-demand, or custom webhooks
 - **Cryptocurrency Payments** - Bitcoin and Monero via opd-ai/paywall integration
 - **Admin API** - Manage items, categories, and tags without code changes
-- **PostgreSQL Catalog** - GORM-based database with full CRUD operations
+- **BoltDB Storage** - Embedded key-value database with full CRUD operations
 - **RESTful API** - CORS-enabled endpoints for frontends and integrations
 - **Docker Ready** - Complete development environment with Docker Compose
 - **Handler Registry** - Dynamically register and dispatch fulfillment strategies
-- **JSON Configuration** - Flexible backend configuration stored as JSONB in database
+- **JSON Configuration** - Flexible backend configuration stored in database
 
 ## Requirements
 
 - Go 1.21+
-- PostgreSQL 15+
 - Docker & Docker Compose (optional, for local development)
 
 ## Quick Start
@@ -38,7 +37,6 @@ curl http://localhost:8080/health
 
 Services available at:
 - API: http://localhost:8080
-- PostgreSQL: localhost:5432
 - Mock Paywall: http://localhost:8081
 
 ### Local Setup
@@ -55,7 +53,7 @@ go run cmd/store/main.go
 Set environment variables in `.env`:
 
 ```bash
-STORE_DATABASE_URL=postgres://user:pass@localhost:5432/store_db
+STORE_DATABASE_PATH=./data/store.db
 STORE_PORT=8080
 STORE_HOST=0.0.0.0
 STORE_PAYWALL_URL=http://localhost:8081
@@ -74,7 +72,7 @@ STORE_LOG_FORMAT=json
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `STORE_DATABASE_URL` | Yes | PostgreSQL connection string |
+| `STORE_DATABASE_PATH` | No | Path to BoltDB database file (default: ./data/store.db) |
 | `STORE_PORT` | No | Server port (default: 8080) |
 | `STORE_HOST` | No | Server host (default: 0.0.0.0) |
 | `STORE_PAYWALL_URL` | Yes | URL of the opd-ai/paywall service |
@@ -286,7 +284,7 @@ The system provides core models for managing catalog and payments:
 - **Payment** - Records transactions with status tracking (pending, confirmed, fulfilled, failed)
 - **FormSubmission** - Stores form data from shipping and custom handlers
 
-All models use GORM annotations for PostgreSQL with automatic schema migration on startup.
+All models use JSON encoding for BoltDB storage with automatic bucket initialization on startup.
 
 ## Testing
 

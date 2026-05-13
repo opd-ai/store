@@ -1,9 +1,7 @@
 package models
 
 import (
-	"database/sql/driver"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,69 +9,69 @@ import (
 
 // Category represents an item category in the store.
 type Category struct {
-	ID          string    `json:"id" gorm:"primaryKey"`
-	Name        string    `json:"name" gorm:"index"`
-	Slug        string    `json:"slug" gorm:"uniqueIndex"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Slug        string    `json:"slug"`
 	Description string    `json:"description"`
 	Order       int       `json:"order"`
-	Metadata    JSONMap   `json:"metadata" gorm:"type:jsonb"`
+	Metadata    JSONMap   `json:"metadata"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
-	Items       []Item    `json:"items,omitempty" gorm:"foreignKey:CategoryID"`
+	Items       []Item    `json:"items,omitempty"`
 }
 
 // Tag represents a searchable tag for items.
 type Tag struct {
-	ID        string    `json:"id" gorm:"primaryKey"`
-	Name      string    `json:"name" gorm:"index"`
-	Slug      string    `json:"slug" gorm:"uniqueIndex"`
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Slug      string    `json:"slug"`
 	CreatedAt time.Time `json:"created_at"`
-	Items     []Item    `json:"items,omitempty" gorm:"many2many:item_tags"`
+	Items     []Item    `json:"items,omitempty"`
 }
 
 // Item represents a product in the store.
 type Item struct {
-	ID            string    `json:"id" gorm:"primaryKey"`
-	CategoryID    string    `json:"category_id" gorm:"index"`
-	Category      *Category `json:"-" gorm:"foreignKey:CategoryID"`
+	ID            string    `json:"id"`
+	CategoryID    string    `json:"category_id"`
+	Category      *Category `json:"category,omitempty"`
 	Name          string    `json:"name"`
 	Description   string    `json:"description"`
 	Price         string    `json:"price"` // uint64 satoshis or string for precision
 	Currency      string    `json:"currency"`
 	Image         string    `json:"image"`
-	BackendType   string    `json:"backend_type" gorm:"index"`
-	BackendConfig JSONMap   `json:"backend_config" gorm:"type:jsonb"`
-	Metadata      JSONMap   `json:"metadata" gorm:"type:jsonb"`
-	Active        bool      `json:"active" gorm:"index"`
-	Tags          []Tag     `json:"tags,omitempty" gorm:"many2many:item_tags"`
+	BackendType   string    `json:"backend_type"`
+	BackendConfig JSONMap   `json:"backend_config"`
+	Metadata      JSONMap   `json:"metadata"`
+	Active        bool      `json:"active"`
+	Tags          []Tag     `json:"tags,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // Payment represents a transaction for an item.
 type Payment struct {
-	ID                string     `json:"id" gorm:"primaryKey"`
-	ItemID            string     `json:"item_id" gorm:"index"`
-	Item              *Item      `json:"-" gorm:"foreignKey:ItemID"`
-	InvoiceID         string     `json:"invoice_id" gorm:"index"`
-	PaymentHash       *string    `json:"payment_hash" gorm:"uniqueIndex"`
-	Status            string     `json:"status" gorm:"index"` // pending, confirmed, failed, fulfilled
-	PayerInfo         JSONMap    `json:"payer_info" gorm:"type:jsonb"`
+	ID                string     `json:"id"`
+	ItemID            string     `json:"item_id"`
+	Item              *Item      `json:"item,omitempty"`
+	InvoiceID         string     `json:"invoice_id"`
+	PaymentHash       *string    `json:"payment_hash"`
+	Status            string     `json:"status"` // pending, confirmed, failed, fulfilled
+	PayerInfo         JSONMap    `json:"payer_info"`
 	Amount            string     `json:"amount"`
 	Currency          string     `json:"currency"`
 	ConfirmedAt       *time.Time `json:"confirmed_at"`
 	FulfilledAt       *time.Time `json:"fulfilled_at"`
-	FulfillmentResult JSONMap    `json:"fulfillment_result" gorm:"type:jsonb"`
-	CreatedAt         time.Time  `json:"created_at" gorm:"index"`
+	FulfillmentResult JSONMap    `json:"fulfillment_result"`
+	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 // FormSubmission stores form data collected by fulfillment handlers.
 type FormSubmission struct {
-	ID          string     `json:"id" gorm:"primaryKey"`
-	PaymentID   string     `json:"payment_id" gorm:"index"`
-	Payment     *Payment   `json:"-" gorm:"foreignKey:PaymentID"`
-	FormData    JSONMap    `json:"form_data" gorm:"type:jsonb"`
+	ID          string     `json:"id"`
+	PaymentID   string     `json:"payment_id"`
+	Payment     *Payment   `json:"payment,omitempty"`
+	FormData    JSONMap    `json:"form_data"`
 	Submitted   bool       `json:"submitted"`
 	ProcessedAt *time.Time `json:"processed_at"`
 	CreatedAt   time.Time  `json:"created_at"`
@@ -81,29 +79,33 @@ type FormSubmission struct {
 
 // DownloadLog tracks download attempts for rate limiting.
 type DownloadLog struct {
-	ID           string    `json:"id" gorm:"primaryKey"`
-	PaymentID    string    `json:"payment_id" gorm:"index"`
-	Payment      *Payment  `json:"-" gorm:"foreignKey:PaymentID"`
-	IPAddress    string    `json:"ip_address" gorm:"index"`
+	ID           string    `json:"id"`
+	PaymentID    string    `json:"payment_id"`
+	Payment      *Payment  `json:"payment,omitempty"`
+	IPAddress    string    `json:"ip_address"`
 	UserAgent    string    `json:"user_agent"`
-	DownloadedAt time.Time `json:"downloaded_at" gorm:"index"`
+	DownloadedAt time.Time `json:"downloaded_at"`
 }
 
-// JSONMap custom type for JSONB fields.
+// JSONMap custom type for JSON fields.
 type JSONMap map[string]interface{}
 
-// Scan implements sql.Scanner interface.
-func (j *JSONMap) Scan(value interface{}) error {
-	bytes, ok := value.([]byte)
-	if !ok {
-		return fmt.Errorf("type assertion to []byte failed: %v", value)
+// MarshalJSON implements json.Marshaler interface.
+func (j JSONMap) MarshalJSON() ([]byte, error) {
+	if j == nil {
+		return []byte("{}"), nil
 	}
-	return json.Unmarshal(bytes, &j)
+	return json.Marshal(map[string]interface{}(j))
 }
 
-// Value implements driver.Valuer interface.
-func (j JSONMap) Value() (driver.Value, error) {
-	return json.Marshal(j)
+// UnmarshalJSON implements json.Unmarshaler interface.
+func (j *JSONMap) UnmarshalJSON(data []byte) error {
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return err
+	}
+	*j = JSONMap(m)
+	return nil
 }
 
 // NewID generates a new UUID.
