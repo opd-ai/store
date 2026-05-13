@@ -1,0 +1,1318 @@
+openapi: 3.0.3
+info:
+  title: opd-ai/store API
+  version: 1.0.0-alpha
+  description: |
+    A self-hosted cryptocurrency payment store with pluggable fulfillment handlers.
+    
+    Integrates with opd-ai/paywall for Bitcoin/Monero payments and provides a flexible,
+    extensible system for selling digital goods, physical products, print-on-demand items,
+    or anything custom.
+    
+    ## Authentication
+    
+    Admin endpoints require authentication via the `X-Admin-Token` header:
+    
+    ```
+    X-Admin-Token: your-secret-token
+    ```
+    
+    Set the token using the `STORE_ADMIN_TOKEN` environment variable.
+    
+    ## Payment Flow
+    
+    1. **Browse Catalog**: `GET /api/catalog` - View available items
+    2. **Create Checkout**: `POST /api/checkout` - Initiate payment for an item
+    3. **Check Status**: `GET /api/payment/{id}/status` - Monitor payment status
+    4. **Complete Fulfillment**: Payment automatically fulfilled after confirmation, or submit forms/track downloads as needed
+    
+    ## Handler Types
+    
+    Items have different `backend_type` values that determine fulfillment behavior:
+    
+    - **digital_media**: Immediate downloads with expiration and rate limiting
+    - **shipping_form**: Collect customer address for physical goods
+    - **pod**: Print-on-demand integration (Printful, Redbubble, TeeSpring)
+    - **custom**: External webhook for custom fulfillment workflows
+  contact:
+    name: opd-ai/store
+    url: https://github.com/opd-ai/store
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: https://api.example.com
+    description: Production server (configure to your domain)
+
+tags:
+  - name: Public
+    description: Public API endpoints for browsing and purchasing
+  - name: Webhooks
+    description: Webhook endpoints for external integrations
+  - name: Admin - Catalog
+    description: Admin endpoints for managing categories, items, and tags
+  - name: Admin - Payments
+    description: Admin endpoints for managing payments and fulfillment
+  - name: Admin - Orders
+    description: Admin endpoints for print-on-demand order tracking
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Returns server health status
+      operationId: getHealth
+      tags:
+        - Public
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /api/catalog:
+    get:
+      summary: Get catalog
+      description: Returns all categories, items, and tags in the store
+      operationId: getCatalog
+      tags:
+        - Public
+      responses:
+        '200':
+          description: Catalog retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Catalog'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/items/{id}:
+    get:
+      summary: Get item by ID
+      description: Returns detailed information about a specific item
+      operationId: getItem
+      tags:
+        - Public
+      parameters:
+        - $ref: '#/components/parameters/ItemID'
+      responses:
+        '200':
+          description: Item retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Item'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/checkout:
+    post:
+      summary: Create checkout
+      description: Initiates a payment for an item and returns payment details
+      operationId: createCheckout
+      tags:
+        - Public
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckoutRequest'
+      responses:
+        '200':
+          description: Checkout created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckoutResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/payment/{id}/status:
+    get:
+      summary: Get payment status
+      description: Returns the current status of a payment
+      operationId: getPaymentStatus
+      tags:
+        - Public
+      parameters:
+        - $ref: '#/components/parameters/PaymentID'
+      responses:
+        '200':
+          description: Payment status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentStatus'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/payment/{id}/submit-form:
+    post:
+      summary: Submit payment form
+      description: Submit form data (e.g., shipping address) for fulfillment
+      operationId: submitPaymentForm
+      tags:
+        - Public
+      parameters:
+        - $ref: '#/components/parameters/PaymentID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FormSubmissionRequest'
+      responses:
+        '200':
+          description: Form submitted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Form submitted successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/payment/{id}/download:
+    post:
+      summary: Track download
+      description: Track a download attempt for rate limiting (digital media items)
+      operationId: trackDownload
+      tags:
+        - Public
+      parameters:
+        - $ref: '#/components/parameters/PaymentID'
+      responses:
+        '200':
+          description: Download tracked successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  remaining_downloads:
+                    type: integer
+                    example: 2
+        '429':
+          description: Download limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /webhook/payment-confirmed:
+    post:
+      summary: Payment confirmation webhook
+      description: Webhook endpoint called by opd-ai/paywall when a payment is confirmed
+      operationId: webhookPaymentConfirmed
+      tags:
+        - Webhooks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookPaymentConfirmed'
+      responses:
+        '200':
+          description: Webhook processed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/handlers:
+    get:
+      summary: List handlers
+      description: Returns all registered fulfillment handlers
+      operationId: listHandlers
+      tags:
+        - Admin - Catalog
+      security:
+        - AdminToken: []
+      responses:
+        '200':
+          description: Handlers retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  handlers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/HandlerInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /admin/categories:
+    post:
+      summary: Create category
+      description: Creates a new category
+      operationId: createCategory
+      tags:
+        - Admin - Catalog
+      security:
+        - AdminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CategoryRequest'
+      responses:
+        '201':
+          description: Category created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Category'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    get:
+      summary: List categories
+      description: Returns all categories
+      operationId: listCategories
+      tags:
+        - Admin - Catalog
+      security:
+        - AdminToken: []
+      responses:
+        '200':
+          description: Categories retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  categories:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Category'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/categories/{id}:
+    put:
+      summary: Update category
+      description: Updates an existing category
+      operationId: updateCategory
+      tags:
+        - Admin - Catalog
+      security:
+        - AdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/CategoryID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CategoryRequest'
+      responses:
+        '200':
+          description: Category updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Category'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      summary: Delete category
+      description: Deletes a category
+      operationId: deleteCategory
+      tags:
+        - Admin - Catalog
+      security:
+        - AdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/CategoryID'
+      responses:
+        '204':
+          description: Category deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/items:
+    post:
+      summary: Create item
+      description: Creates a new item
+      operationId: createItem
+      tags:
+        - Admin - Catalog
+      security:
+        - AdminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ItemRequest'
+      responses:
+        '201':
+          description: Item created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Item'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    get:
+      summary: List items
+      description: Returns all items with optional filtering
+      operationId: listItems
+      tags:
+        - Admin - Catalog
+      security:
+        - AdminToken: []
+      parameters:
+        - name: category_id
+          in: query
+          description: Filter by category ID
+          schema:
+            type: string
+        - name: backend_type
+          in: query
+          description: Filter by backend type
+          schema:
+            type: string
+        - name: active
+          in: query
+          description: Filter by active status
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Items retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Item'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/items/{id}:
+    put:
+      summary: Update item
+      description: Updates an existing item
+      operationId: updateItem
+      tags:
+        - Admin - Catalog
+      security:
+        - AdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/ItemID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ItemRequest'
+      responses:
+        '200':
+          description: Item updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Item'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      summary: Delete item
+      description: Deletes an item
+      operationId: deleteItem
+      tags:
+        - Admin - Catalog
+      security:
+        - AdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/ItemID'
+      responses:
+        '204':
+          description: Item deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/tags:
+    post:
+      summary: Create tag
+      description: Creates a new tag
+      operationId: createTag
+      tags:
+        - Admin - Catalog
+      security:
+        - AdminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagRequest'
+      responses:
+        '201':
+          description: Tag created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tag'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    get:
+      summary: List tags
+      description: Returns all tags
+      operationId: listTags
+      tags:
+        - Admin - Catalog
+      security:
+        - AdminToken: []
+      responses:
+        '200':
+          description: Tags retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tags:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tag'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/tags/{id}:
+    put:
+      summary: Update tag
+      description: Updates an existing tag
+      operationId: updateTag
+      tags:
+        - Admin - Catalog
+      security:
+        - AdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/TagID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagRequest'
+      responses:
+        '200':
+          description: Tag updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tag'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      summary: Delete tag
+      description: Deletes a tag
+      operationId: deleteTag
+      tags:
+        - Admin - Catalog
+      security:
+        - AdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/TagID'
+      responses:
+        '204':
+          description: Tag deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/items/{id}/tags:
+    post:
+      summary: Add tag to item
+      description: Associates a tag with an item
+      operationId: addItemTag
+      tags:
+        - Admin - Catalog
+      security:
+        - AdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/ItemID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - tag_id
+              properties:
+                tag_id:
+                  type: string
+                  example: tag_abc123
+      responses:
+        '200':
+          description: Tag added to item successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/items/{id}/tags/{tag_id}:
+    delete:
+      summary: Remove tag from item
+      description: Disassociates a tag from an item
+      operationId: removeItemTag
+      tags:
+        - Admin - Catalog
+      security:
+        - AdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/ItemID'
+        - $ref: '#/components/parameters/TagID'
+      responses:
+        '204':
+          description: Tag removed from item successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/payments:
+    get:
+      summary: List payments
+      description: Returns all payments with optional filtering
+      operationId: listPayments
+      tags:
+        - Admin - Payments
+      security:
+        - AdminToken: []
+      parameters:
+        - name: status
+          in: query
+          description: Filter by payment status
+          schema:
+            type: string
+            enum: [pending, confirmed, failed, fulfilled]
+        - name: item_id
+          in: query
+          description: Filter by item ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Payments retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  payments:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Payment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/payment/{id}/confirm:
+    post:
+      summary: Confirm payment
+      description: Manually confirms a payment (typically done automatically via webhook)
+      operationId: confirmPayment
+      tags:
+        - Admin - Payments
+      security:
+        - AdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/PaymentID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - payment_hash
+              properties:
+                payment_hash:
+                  type: string
+                  example: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+      responses:
+        '200':
+          description: Payment confirmed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/payment/{id}/fulfill:
+    post:
+      summary: Fulfill payment
+      description: Manually triggers fulfillment for a confirmed payment
+      operationId: fulfillPayment
+      tags:
+        - Admin - Payments
+      security:
+        - AdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/PaymentID'
+      responses:
+        '200':
+          description: Payment fulfilled successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  fulfillment_result:
+                    type: object
+                    additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/orders/{payment_id}/status:
+    get:
+      summary: Get order status
+      description: Get print-on-demand order status from external provider
+      operationId: getOrderStatus
+      tags:
+        - Admin - Orders
+      security:
+        - AdminToken: []
+      parameters:
+        - name: payment_id
+          in: path
+          required: true
+          description: Payment ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Order status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    AdminToken:
+      type: apiKey
+      in: header
+      name: X-Admin-Token
+      description: Admin authentication token set via STORE_ADMIN_TOKEN environment variable
+
+  parameters:
+    ItemID:
+      name: id
+      in: path
+      required: true
+      description: Item ID
+      schema:
+        type: string
+        example: item_xyz789
+    CategoryID:
+      name: id
+      in: path
+      required: true
+      description: Category ID
+      schema:
+        type: string
+        example: cat_abc123
+    TagID:
+      name: id
+      in: path
+      required: true
+      description: Tag ID
+      schema:
+        type: string
+        example: tag_abc123
+    PaymentID:
+      name: id
+      in: path
+      required: true
+      description: Payment ID
+      schema:
+        type: string
+        example: pay_def456
+
+  schemas:
+    Category:
+      type: object
+      required:
+        - id
+        - name
+        - slug
+      properties:
+        id:
+          type: string
+          example: cat_abc123
+        name:
+          type: string
+          example: Digital Products
+        slug:
+          type: string
+          example: digital-products
+        description:
+          type: string
+          example: E-books and digital downloads
+        order:
+          type: integer
+          example: 0
+        metadata:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Tag:
+      type: object
+      required:
+        - id
+        - name
+        - slug
+      properties:
+        id:
+          type: string
+          example: tag_abc123
+        name:
+          type: string
+          example: Programming
+        slug:
+          type: string
+          example: programming
+        created_at:
+          type: string
+          format: date-time
+
+    Item:
+      type: object
+      required:
+        - id
+        - name
+        - price
+        - currency
+        - backend_type
+      properties:
+        id:
+          type: string
+          example: item_xyz789
+        category_id:
+          type: string
+          example: cat_abc123
+        name:
+          type: string
+          example: E-Book: Go Programming
+        description:
+          type: string
+          example: Comprehensive guide to Go programming
+        price:
+          type: string
+          example: "0.001"
+          description: Price in cryptocurrency units
+        currency:
+          type: string
+          enum: [BTC, XMR]
+          example: BTC
+        image:
+          type: string
+          example: https://example.com/images/go-book.jpg
+        backend_type:
+          type: string
+          enum: [digital_media, shipping_form, pod, custom]
+          example: digital_media
+        backend_config:
+          type: object
+          additionalProperties: true
+          description: Configuration specific to the backend handler type
+          example:
+            storage: local
+            file_path: ./downloads/go-programming.pdf
+            expiration_hours: 24
+        metadata:
+          type: object
+          additionalProperties: true
+        active:
+          type: boolean
+          example: true
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Payment:
+      type: object
+      required:
+        - id
+        - item_id
+        - status
+        - amount
+        - currency
+      properties:
+        id:
+          type: string
+          example: pay_def456
+        item_id:
+          type: string
+          example: item_xyz789
+        invoice_id:
+          type: string
+          example: inv_ghi789
+        payment_hash:
+          type: string
+          nullable: true
+          example: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+        status:
+          type: string
+          enum: [pending, confirmed, failed, fulfilled]
+          example: pending
+        payer_info:
+          type: object
+          additionalProperties: true
+          description: Information about the payer (email, etc.)
+        amount:
+          type: string
+          example: "0.001"
+        currency:
+          type: string
+          enum: [BTC, XMR]
+          example: BTC
+        confirmed_at:
+          type: string
+          format: date-time
+          nullable: true
+        fulfilled_at:
+          type: string
+          format: date-time
+          nullable: true
+        fulfillment_result:
+          type: object
+          additionalProperties: true
+          description: Result from the fulfillment handler
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Catalog:
+      type: object
+      properties:
+        categories:
+          type: array
+          items:
+            $ref: '#/components/schemas/Category'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Item'
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+
+    CheckoutRequest:
+      type: object
+      required:
+        - item_id
+      properties:
+        item_id:
+          type: string
+          example: item_xyz789
+        email:
+          type: string
+          format: email
+          example: buyer@example.com
+        metadata:
+          type: object
+          additionalProperties: true
+
+    CheckoutResponse:
+      type: object
+      properties:
+        payment_id:
+          type: string
+          example: pay_def456
+        invoice_id:
+          type: string
+          example: inv_ghi789
+        status:
+          type: string
+          example: pending
+        amount:
+          type: string
+          example: "0.001"
+        currency:
+          type: string
+          example: BTC
+        payment_address:
+          type: string
+          example: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh
+        qr_code:
+          type: string
+          example: data:image/png;base64,...
+        expires_at:
+          type: string
+          format: date-time
+
+    PaymentStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [pending, confirmed, failed, fulfilled]
+          example: fulfilled
+        amount:
+          type: string
+          example: "0.001"
+        currency:
+          type: string
+          example: BTC
+        payment_address:
+          type: string
+          example: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh
+        fulfillment_result:
+          type: object
+          additionalProperties: true
+          description: Available after fulfillment
+          example:
+            download_url: http://localhost:8080/download/abc123token
+            expires_at: "2026-05-14T16:05:00Z"
+        confirmed_at:
+          type: string
+          format: date-time
+          nullable: true
+        fulfilled_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    FormSubmissionRequest:
+      type: object
+      required:
+        - form_data
+      properties:
+        form_data:
+          type: object
+          additionalProperties: true
+          description: Form fields as key-value pairs
+          example:
+            name: John Doe
+            address: 123 Main St
+            city: Springfield
+            zip: 12345
+
+    WebhookPaymentConfirmed:
+      type: object
+      required:
+        - invoice_id
+        - payment_hash
+      properties:
+        invoice_id:
+          type: string
+          example: inv_ghi789
+        payment_hash:
+          type: string
+          example: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+        amount:
+          type: string
+          example: "0.001"
+        currency:
+          type: string
+          example: BTC
+        confirmations:
+          type: integer
+          example: 6
+
+    HandlerInfo:
+      type: object
+      properties:
+        type:
+          type: string
+          example: digital_media
+        name:
+          type: string
+          example: Digital Media Handler
+        description:
+          type: string
+          example: Delivers digital downloads with expiration and rate limiting
+        config_schema:
+          type: object
+          additionalProperties: true
+
+    OrderStatus:
+      type: object
+      properties:
+        order_id:
+          type: string
+          example: 123456789
+        status:
+          type: string
+          example: shipped
+        tracking_number:
+          type: string
+          example: 1Z999AA10123456784
+        tracking_url:
+          type: string
+          example: https://www.ups.com/track?loc=en_US&tracknum=1Z999AA10123456784
+        estimated_delivery:
+          type: string
+          format: date
+          example: "2026-05-20"
+
+    CategoryRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          example: Digital Products
+        description:
+          type: string
+          example: E-books and digital downloads
+        order:
+          type: integer
+          example: 0
+        metadata:
+          type: object
+          additionalProperties: true
+
+    ItemRequest:
+      type: object
+      required:
+        - name
+        - price
+        - currency
+        - backend_type
+      properties:
+        name:
+          type: string
+          example: E-Book: Go Programming
+        description:
+          type: string
+          example: Comprehensive guide to Go programming
+        price:
+          type: string
+          example: "0.001"
+        currency:
+          type: string
+          enum: [BTC, XMR]
+          example: BTC
+        category_id:
+          type: string
+          example: cat_abc123
+        image:
+          type: string
+          example: https://example.com/images/go-book.jpg
+        backend_type:
+          type: string
+          enum: [digital_media, shipping_form, pod, custom]
+          example: digital_media
+        backend_config:
+          type: object
+          additionalProperties: true
+          example:
+            storage: local
+            file_path: ./downloads/go-programming.pdf
+            expiration_hours: 24
+        metadata:
+          type: object
+          additionalProperties: true
+        active:
+          type: boolean
+          example: true
+
+    TagRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          example: Programming
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          example: Error message
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Unauthorized - missing or invalid admin token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
