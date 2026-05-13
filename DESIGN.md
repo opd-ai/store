@@ -381,7 +381,7 @@ func (r *HandlerRegistry) All() map[string]HandlerMetadata
 ### 5.1 Configuration Sources (Priority Order)
 
 1. **Environment Variables** (highest priority)
-   - `STORE_DATABASE_URL`: PostgreSQL connection string
+   - `STORE_DATABASE_PATH`: BoltDB database file path (default: ./data/store.db)
    - `STORE_PAYWALL_URL`: opd-ai/paywall service URL
    - `STORE_PORT`: Server port (default: 8080)
    - `STORE_ADMIN_TOKEN`: API token for admin endpoints
@@ -401,8 +401,8 @@ func (r *HandlerRegistry) All() map[string]HandlerMetadata
      api_key: <encrypted>
    
    database:
-     type: postgresql
-     url: postgres://user:pass@localhost/store_db
+     path: ./data/store.db
+     type: boltdb
    
    storage:
      type: local  # or "s3"
@@ -425,82 +425,98 @@ func (r *HandlerRegistry) All() map[string]HandlerMetadata
 
 3. **Defaults** (lowest priority)
 
-### 5.2 Database Schema
+### 5.2 BoltDB Bucket Structure
 
-**PostgreSQL** (or compatible)
+**BoltDB Embedded Database** (Pure Go, no external dependencies)
 
-```sql
-CREATE TABLE categories (
-  id UUID PRIMARY KEY,
-  name VARCHAR(255) NOT NULL,
-  slug VARCHAR(255) UNIQUE NOT NULL,
-  description TEXT,
-  `order` INT DEFAULT 0,
-  metadata JSONB DEFAULT '{}',
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
-);
+BoltDB organizes data into buckets (similar to tables) with key-value pairs stored as JSON:
 
-CREATE TABLE tags (
-  id UUID PRIMARY KEY,
-  name VARCHAR(255) NOT NULL,
-  slug VARCHAR(255) UNIQUE NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE TABLE items (
-  id UUID PRIMARY KEY,
-  category_id UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
-  name VARCHAR(255) NOT NULL,
-  description TEXT,
-  price DECIMAL(20, 8) NOT NULL,
-  currency VARCHAR(10) NOT NULL,
-  image VARCHAR(500),
-  backend_type VARCHAR(50) NOT NULL,
-  backend_config JSONB NOT NULL DEFAULT '{}',
-  metadata JSONB DEFAULT '{}',
-  active BOOLEAN DEFAULT true,
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW(),
-  INDEX(category_id),
-  INDEX(backend_type),
-  INDEX(active)
-);
-
-CREATE TABLE item_tags (
-  item_id UUID NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-  tag_id UUID NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-  PRIMARY KEY (item_id, tag_id)
-);
-
-CREATE TABLE payments (
-  id UUID PRIMARY KEY,
-  item_id UUID NOT NULL REFERENCES items(id),
-  payment_hash VARCHAR(255) UNIQUE NOT NULL,
-  status VARCHAR(50) NOT NULL,
-  payer_info JSONB DEFAULT '{}',
-  amount DECIMAL(20, 8) NOT NULL,
-  currency VARCHAR(10) NOT NULL,
-  confirmed_at TIMESTAMP,
-  fulfilled_at TIMESTAMP,
-  fulfillment_result JSONB,
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW(),
-  INDEX(item_id),
-  INDEX(payment_hash),
-  INDEX(status),
-  INDEX(created_at)
-);
-
-CREATE TABLE form_submissions (
-  id UUID PRIMARY KEY,
-  payment_id UUID NOT NULL REFERENCES payments(id) ON DELETE CASCADE,
-  form_data JSONB NOT NULL,
-  submitted_at TIMESTAMP DEFAULT NOW(),
-  processed BOOLEAN DEFAULT false,
-  created_at TIMESTAMP DEFAULT NOW()
-);
 ```
+Bucket: categories
+  Key Format: UUID string
+  Value: JSON-encoded Category
+  Fields:
+    - id: UUID
+    - name: string
+    - slug: string (unique)
+    - description: string
+    - order: int
+    - metadata: JSON object
+    - created_at: RFC3339 timestamp
+    - updated_at: RFC3339 timestamp
+
+Bucket: tags
+  Key Format: UUID string
+  Value: JSON-encoded Tag
+  Fields:
+    - id: UUID
+    - name: string
+    - slug: string (unique)
+    - created_at: RFC3339 timestamp
+
+Bucket: items
+  Key Format: UUID string
+  Value: JSON-encoded Item
+  Fields:
+    - id: UUID
+    - category_id: UUID (references categories)
+    - name: string
+    - description: string
+    - price: string (decimal as string)
+    - currency: string
+    - image: string
+    - backend_type: string
+    - backend_config: JSON object
+    - metadata: JSON object
+    - active: boolean
+    - created_at: RFC3339 timestamp
+    - updated_at: RFC3339 timestamp
+
+Bucket: item_tags (Many-to-Many Junction)
+  Key Format: "item_id:tag_id"
+  Value: Association timestamp
+
+Bucket: tag_items (Reverse Index)
+  Key Format: "tag_id:item_id"
+  Value: Association timestamp
+
+Bucket: payments
+  Key Format: UUID string
+  Value: JSON-encoded Payment
+  Fields:
+    - id: UUID
+    - item_id: UUID (references items)
+    - invoice_id: string
+    - payment_hash: string (unique)
+    - status: string (pending, confirmed, fulfilled, failed)
+    - payer_info: JSON object
+    - amount: string (decimal as string)
+    - currency: string
+    - confirmed_at: RFC3339 timestamp
+    - fulfilled_at: RFC3339 timestamp
+    - fulfillment_result: JSON object
+    - created_at: RFC3339 timestamp
+    - updated_at: RFC3339 timestamp
+
+Bucket: form_submissions
+  Key Format: UUID string
+  Value: JSON-encoded FormSubmission
+  Fields:
+    - id: UUID
+    - payment_id: UUID (references payments)
+    - form_data: JSON object
+    - submitted_at: RFC3339 timestamp
+    - processed: boolean
+    - created_at: RFC3339 timestamp
+
+Index Buckets (for query optimization):
+  - payments_by_invoice: invoice_id -> payment_id
+  - payments_by_status: status:id -> payment_id
+  - items_by_category: category_id:id -> item_id
+  - download_logs: payment_id:timestamp -> log_id
+```
+
+All data is JSON-encoded for flexibility. Transactions are ACID-compliant via BoltDB's write serialization.
 
 ---
 
@@ -690,21 +706,15 @@ services:
     ports:
       - "8080:8080"
     environment:
-      STORE_DATABASE_URL: postgres://store:password@postgres:5432/store_db
+      STORE_DATABASE_PATH: /app/data/store.db
       STORE_PAYWALL_URL: http://paywall:8081
       STORE_ADMIN_TOKEN: supersecret
+      STORE_UPLOADS_DIR: /app/data/uploads
     depends_on:
-      - postgres
       - paywall
-
-  postgres:
-    image: postgres:15
-    environment:
-      POSTGRES_USER: store
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: store_db
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - store_data:/app/data
+      - ./templates:/app/templates
 
   paywall:
     image: opd-ai/paywall:latest
@@ -714,7 +724,7 @@ services:
       PAYWALL_NETWORK: regtest  # or mainnet/testnet
 
 volumes:
-  postgres_data:
+  store_data:
 ```
 
 ### 9.2 Monitoring & Logging

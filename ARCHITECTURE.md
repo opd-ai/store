@@ -103,12 +103,13 @@ Where:
 │  │           Data Models (pkg/models)                      │  │
 │  │  - Category, Tag, Item                                 │  │
 │  │  - Payment, FormSubmission                             │  │
-│  │  - JSONMap (custom GORM types)                         │  │
+│  │  - JSONMap (custom JSON types)                         │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │    PostgreSQL Database (GORM ORM)                        │  │
+│  │    BoltDB Embedded Database (bbolt)                      │  │
 │  │  - categories, items, tags, payments, form_submissions  │  │
+│  │  - Buckets with JSON encoding                           │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
@@ -159,44 +160,49 @@ Where:
  └──────────────────────────────────────────┘ 
 ```
 
-## 4. Database Schema (Simplified)
+## 4. BoltDB Bucket Structure
 
 ```
-┌──────────────┐         ┌───────────┐         ┌─────────┐
-│  categories  │         │    tags   │         │  items  │
-├──────────────┤         ├───────────┤         ├─────────┤
-│ id (PK)      │         │ id (PK)   │         │ id (PK) │
-│ name         │         │ name      │         │ cat_id (FK)
-│ slug (U)     │         │ slug (U)  │         │ name    │
-│ description  │         └───────────┘         │ price   │
-│ order        │              △                 │ currency
-│ metadata     │              │                 │ backend_type
-│ created_at   │         ┌────┴─────┐           │ backend_config
-│ updated_at   │         │           │           │ metadata
-└──────────────┘    item_tags        │           │ active
-      △           (join table)        │           │ created_at
-      │                               │           │ updated_at
-      │        ┌──────────────────────┘           └─────────┘
-      │        │
-  category_id──┘
+BoltDB Database (store.db)
+│
+├─ categories          (Bucket)
+│  └─ {id} → Category JSON
+│
+├─ tags               (Bucket)
+│  └─ {id} → Tag JSON
+│
+├─ items              (Bucket)
+│  └─ {id} → Item JSON (includes category_id, backend_type, backend_config)
+│
+├─ payments           (Bucket)
+│  └─ {id} → Payment JSON (includes item_id, amount, status, fulfillment_result)
+│
+├─ form_submissions   (Bucket)
+│  └─ {id} → FormSubmission JSON (includes payment_id, form_data)
+│
+├─ download_logs      (Bucket)
+│  └─ {id} → DownloadLog JSON
+│
+├─ payments_by_invoice    (Index Bucket)
+│  └─ {invoice_id} → payment_id
+│
+├─ payments_by_status     (Index Bucket)
+│  └─ {status}:{id} → payment_id
+│
+├─ items_by_category      (Index Bucket)
+│  └─ {category_id}:{id} → item_id
+│
+├─ item_tags              (Index Bucket - Many-to-Many)
+│  └─ {item_id}:{tag_id} → association
+│
+├─ tag_items              (Index Bucket - Many-to-Many)
+│  └─ {tag_id}:{item_id} → association
+│
+└─ downloads_by_payment   (Index Bucket)
+   └─ {payment_id}:{timestamp} → log_id
 
-┌──────────────┐         ┌──────────────────┐
-│   payments   │         │  form_submissions│
-├──────────────┤         ├──────────────────┤
-│ id (PK)      │         │ id (PK)          │
-│ item_id (FK) │         │ payment_id (FK)  │
-│ amount       │         │ form_data        │
-│ currency     │         │ submitted        │
-│ payment_hash │         │ processed_at     │
-│ status       │         │ created_at       │
-│ payer_info   │         └──────────────────┘
-│ confirmed_at │
-│ fulfilled_at │
-│ fulfillment_ │
-│  result      │
-│ created_at   │
-│ updated_at   │
-└──────────────┘
+All data stored as JSON-encoded values.
+Keys are string-based identifiers.
 ```
 
 ## 5. Deployment Architecture
@@ -205,30 +211,28 @@ Where:
 ┌─────────────────────────────────────────────────────────────┐
 │                     Docker Compose                          │
 │                                                             │
-│  ┌────────────────┐  ┌──────────────┐  ┌─────────────────┐ │
-│  │   PostgreSQL   │  │ Mock Paywall │  │  Store Service  │ │
-│  │                │  │              │  │                 │ │
-│  │  - Categories  │  │  - Create    │  │  - API Handlers │ │
-│  │  - Items       │  │    Payment   │  │  - Handler Call │ │
-│  │  - Payments    │  │  - Verify TX │  │  - DB Queries   │ │
-│  │  - Forms       │  │              │  │                 │ │
-│  └────────┬───────┘  └──────┬───────┘  └────────┬────────┘ │
-│           │                 │                   │          │
-│           └─────────────────┼───────────────────┘          │
-│                             │                              │
+│  ┌──────────────┐             ┌─────────────────────────┐   │
+│  │ Mock Paywall │             │   Store Service         │   │
+│  │              │             │                         │   │
+│  │  - Create    │             │  - API Handlers         │   │
+│  │    Payment   │             │  - Handler Registry     │   │
+│  │  - Verify TX │             │  - BoltDB (Embedded)    │   │
+│  │              │             │    └─ store.db          │   │
+│  └──────┬───────┘             └────────┬────────────────┘   │
+│         │                              │                    │
+│         └──────────────────────────────┘                    │
+│                                                             │
 │                Network: store_network                       │
 │                                                             │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │      Volumes                                        │   │
-│  │  - postgres_data (DB persistence)                  │   │
+│  │  - store_data (BoltDB file + uploads persistence)  │   │
 │  │  - templates/ (custom HTML/CSS)                    │   │
-│  │  - data/ (uploads, logs)                           │   │
 │  └─────────────────────────────────────────────────────┘   │
 │                                                             │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │      Ports                                          │   │
 │  │  - localhost:8080 -> Store API                     │   │
-│  │  - localhost:5432 -> PostgreSQL                    │   │
 │  │  - localhost:8081 -> Paywall Mock                  │   │
 │  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘

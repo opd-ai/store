@@ -258,24 +258,27 @@ Use clear assertions that fail with helpful messages.
 
 ### Test Database
 
-Integration tests use SQLite for fast in-memory databases. Production uses PostgreSQL only.
+Integration tests use BoltDB for fast embedded database testing.
 
-**Why SQLite for tests?**
-- Fast in-memory operation (`:memory:` database)
-- No external dependencies required for running tests
-- Clean state for each test run
-- CGO dependency isolated to test code only
+**Why BoltDB for tests?**
+- Fast in-memory operation using temporary files
+- No external dependencies required (pure Go)
+- Clean state for each test run via temp directories
+- Same database used in production (realistic testing)
 
 **Running tests:**
 ```bash
-# Standard test run (requires CGO for SQLite)
-CGO_ENABLED=1 go test ./...
+# Standard test run
+go test ./...
+
+# With coverage
+go test -coverprofile=coverage.out ./...
 
 # Skip integration tests
 go test -short ./...
 ```
 
-**Important:** The `github.com/mattn/go-sqlite3` dependency in `go.mod` is used exclusively for testing. Production deployments use PostgreSQL and do not include SQLite code in the binary.
+**Important:** Tests use the same BoltDB implementation as production, ensuring consistency between test and production behavior.
 
 ## Documentation
 
