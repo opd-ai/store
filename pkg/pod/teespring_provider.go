@@ -21,8 +21,9 @@ func NewTeespringProvider(apiKey string) *TeespringProvider {
 
 // CreateOrder creates a new order with Teespring (stub implementation).
 func (t *TeespringProvider) CreateOrder(ctx context.Context, request *OrderRequest) (*OrderResponse, error) {
-	// TODO: Implement actual Teespring API integration
-	// For now, return a mock response
+	// NOTE: Teespring (now Spring) has limited public API access.
+	// This is a stub implementation that returns mock data for testing.
+	// For production use with Teespring, consider alternative integration methods.
 	orderID := fmt.Sprintf("TS-%d", time.Now().Unix())
 
 	return &OrderResponse{
@@ -37,7 +38,8 @@ func (t *TeespringProvider) CreateOrder(ctx context.Context, request *OrderReque
 
 // GetStatus retrieves the current status of an order (stub implementation).
 func (t *TeespringProvider) GetStatus(ctx context.Context, orderID string) (*OrderStatusResponse, error) {
-	// TODO: Implement actual Teespring status API
+	// NOTE: Teespring (now Spring) has limited public API access.
+	// This is a stub implementation that returns mock data for testing.
 	return &OrderStatusResponse{
 		OrderID:      orderID,
 		Status:       "fulfilled",
@@ -49,7 +51,8 @@ func (t *TeespringProvider) GetStatus(ctx context.Context, orderID string) (*Ord
 
 // CancelOrder cancels an existing order (stub implementation).
 func (t *TeespringProvider) CancelOrder(ctx context.Context, orderID string) error {
-	// TODO: Implement actual Teespring cancel API
+	// NOTE: Teespring (now Spring) has limited public API access.
+	// This is a stub implementation for interface compliance.
 	return nil
 }
 

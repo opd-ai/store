@@ -21,8 +21,9 @@ func NewRedbubbleProvider(apiKey string) *RedbubbleProvider {
 
 // CreateOrder creates a new order with Redbubble (stub implementation).
 func (r *RedbubbleProvider) CreateOrder(ctx context.Context, request *OrderRequest) (*OrderResponse, error) {
-	// TODO: Implement actual Redbubble API integration
-	// For now, return a mock response
+	// NOTE: Redbubble does not provide a public API for order creation.
+	// This is a stub implementation that returns mock data for testing.
+	// For production use with Redbubble, consider alternative integration methods.
 	orderID := fmt.Sprintf("RB-%d", time.Now().Unix())
 
 	return &OrderResponse{
@@ -37,7 +38,8 @@ func (r *RedbubbleProvider) CreateOrder(ctx context.Context, request *OrderReque
 
 // GetStatus retrieves the current status of an order (stub implementation).
 func (r *RedbubbleProvider) GetStatus(ctx context.Context, orderID string) (*OrderStatusResponse, error) {
-	// TODO: Implement actual Redbubble status API
+	// NOTE: Redbubble does not provide a public API for order status.
+	// This is a stub implementation that returns mock data for testing.
 	return &OrderStatusResponse{
 		OrderID:      orderID,
 		Status:       "fulfilled",
@@ -49,7 +51,8 @@ func (r *RedbubbleProvider) GetStatus(ctx context.Context, orderID string) (*Ord
 
 // CancelOrder cancels an existing order (stub implementation).
 func (r *RedbubbleProvider) CancelOrder(ctx context.Context, orderID string) error {
-	// TODO: Implement actual Redbubble cancel API
+	// NOTE: Redbubble does not provide a public API for order cancellation.
+	// This is a stub implementation for interface compliance.
 	return nil
 }
 
