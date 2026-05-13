@@ -22,10 +22,9 @@ This guide covers deploying opd-ai/store to production environments. Whether you
 Before deploying, ensure you have:
 
 - ✅ Go 1.21+ (for building from source)
-- ✅ PostgreSQL 15+ database
 - ✅ opd-ai/paywall service running (or plan to deploy it)
 - ✅ Domain name with SSL certificate (Let's Encrypt recommended)
-- ✅ Server with at least 512MB RAM and 1GB storage
+- ✅ Server with at least 512MB RAM and 1GB storage for BoltDB data
 - ✅ Access to SMTP server (for email notifications, if using email handler)
 
 ## Deployment Options
@@ -77,8 +76,8 @@ Best for: Large-scale deployments, high availability, auto-scaling
 Create a `.env` file or configure these environment variables:
 
 ```bash
-# Database
-STORE_DATABASE_URL=postgres://user:password@localhost:5432/store_production
+# Database (BoltDB embedded file)
+STORE_DATABASE_PATH=/var/lib/store/data/store.db
 
 # Server
 STORE_PORT=8080
@@ -133,66 +132,55 @@ openssl rand -hex 16
 
 ## Database Setup
 
-### Production Database Configuration
+### BoltDB Embedded Database
 
-1. **Create Database:**
+opd-ai/store uses BoltDB, an embedded key-value database that requires no separate database server. All data is stored in a single file specified by `STORE_DATABASE_PATH`.
 
-```sql
-CREATE DATABASE store_production;
-CREATE USER store_user WITH ENCRYPTED PASSWORD 'secure_password_here';
-GRANT ALL PRIVILEGES ON DATABASE store_production TO store_user;
+**Setup Steps:**
+
+1. **Create Data Directory:**
+
+```bash
+sudo mkdir -p /var/lib/store/data
+sudo chown -R store:store /var/lib/store
 ```
 
-2. **Connection Pooling:**
+2. **Set Permissions:**
 
-For production, use connection pooling in your connection string:
-
-```
-postgres://store_user:password@localhost:5432/store_production?pool_max_conns=25&pool_min_conns=5
+```bash
+chmod 755 /var/lib/store/data
 ```
 
-3. **SSL/TLS:**
+3. **Configure Path:**
 
-For remote databases, enable SSL:
+Set `STORE_DATABASE_PATH=/var/lib/store/data/store.db` in your environment.
 
-```
-postgres://store_user:password@db.example.com:5432/store_production?sslmode=require
-```
+### Backup and Recovery
 
-### Database Migrations
+BoltDB is file-based, making backups simple:
 
-opd-ai/store uses GORM's auto-migration feature. On startup, it automatically creates/updates tables.
+**Backup:**
+```bash
+# Stop the service for consistent backup
+sudo systemctl stop store
 
-**Migration happens at startup** in `cmd/store/main.go`:
+# Copy the database file
+cp /var/lib/store/data/store.db /backup/store-$(date +%Y%m%d-%H%M%S).db
 
-```go
-if err := db.AutoMigrate(
-    &models.Category{},
-    &models.Tag{},
-    &models.Item{},
-    &models.Payment{},
-    &models.FormSubmission{},
-    &models.DownloadLog{},
-); err != nil {
-    log.Fatalf("Failed to run migrations: %v", err)
-}
+# Restart service
+sudo systemctl start store
 ```
 
-**For production, consider:**
+**Restore:**
+```bash
+sudo systemctl stop store
+cp /backup/store-20260513-120000.db /var/lib/store/data/store.db
+sudo systemctl start store
+```
 
-1. **Test migrations in staging first**
-2. **Backup database before deploying new versions**
-3. **Use a separate migration tool** for complex changes (e.g., [golang-migrate](https://github.com/golang-migrate/migrate))
+### Database Maintenance
 
-### Managed Database Services
-
-Recommended providers:
-
-- **AWS RDS PostgreSQL** - Automated backups, read replicas, multi-AZ
-- **Google Cloud SQL** - Managed PostgreSQL with high availability
-- **DigitalOcean Managed Databases** - Simple, affordable, automatic backups
-- **Azure Database for PostgreSQL** - Enterprise-grade managed service
-- **Supabase** - Open-source alternative with built-in API
+BoltDB is self-maintaining and requires no vacuum or optimization commands. The file size grows as data is added and automatically reuses space from deleted records.
 
 ## Security Checklist
 
@@ -264,31 +252,11 @@ store.example.com {
 version: '3.8'
 
 services:
-  postgres:
-    image: postgres:15-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: store_production
-      POSTGRES_USER: store_user
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - internal
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U store_user"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   store:
     image: ghcr.io/opd-ai/store:latest
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
     environment:
-      STORE_DATABASE_URL: postgres://store_user:${DB_PASSWORD}@postgres:5432/store_production
+      STORE_DATABASE_PATH: /app/data/store.db
       STORE_PORT: 8080
       STORE_PUBLIC_URL: ${PUBLIC_URL}
       STORE_PAYWALL_URL: ${PAYWALL_URL}
@@ -322,9 +290,12 @@ services:
       - web
 
 volumes:
-  postgres_data:
+  store_data:
+    driver: local
   store_uploads:
+    driver: local
   letsencrypt:
+    driver: local
 
 networks:
   internal:
@@ -334,7 +305,6 @@ networks:
 **Step 2: Create .env file**
 
 ```bash
-DB_PASSWORD=your_secure_db_password
 PUBLIC_URL=https://store.example.com
 PAYWALL_URL=https://paywall.example.com
 PAYWALL_API_KEY=sk_live_xxx
@@ -370,8 +340,7 @@ Create `/etc/systemd/system/store.service`:
 ```ini
 [Unit]
 Description=opd-ai/store - cryptocurrency payment store
-After=network.target postgresql.service
-Requires=postgresql.service
+After=network.target
 
 [Service]
 Type=simple
@@ -413,7 +382,7 @@ sudo chown -R store:store /var/lib/store /var/log/store
 Create `/etc/store/config.env`:
 
 ```bash
-STORE_DATABASE_URL=postgres://store_user:password@localhost:5432/store_production
+STORE_DATABASE_PATH=/var/lib/store/data/store.db
 STORE_PORT=8080
 STORE_HOST=127.0.0.1
 STORE_PUBLIC_URL=https://store.example.com
@@ -506,8 +475,8 @@ spec:
         - configMapRef:
             name: store-config
         env:
-        - name: STORE_DATABASE_URL
-          value: "postgres://store_user:$(DB_PASSWORD)@postgres:5432/store_production"
+        - name: STORE_DATABASE_PATH
+          value: "/app/data/store.db"
         - name: DB_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -809,10 +778,10 @@ Error: failed to connect to database: connection refused
 ```
 
 **Solution:**
-- Check `STORE_DATABASE_URL` is correct
-- Verify PostgreSQL is running
-- Check firewall rules
-- Test connection: `psql postgres://user:pass@host:port/db`
+- Check `STORE_DATABASE_PATH` is correct and directory exists
+- Verify BoltDB file path is accessible and writable
+- Check volume mounts for persistent storage
+- Test file permissions: `ls -la $(dirname $STORE_DATABASE_PATH)`
 
 **2. Paywall Integration Errors**
 

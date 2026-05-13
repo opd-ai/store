@@ -19,10 +19,10 @@ opd-ai/store has been designed and implemented as a **professional, self-hosted 
   - ✅ ShippingForm (address collection)  
   - ✅ PrintOnDemand (vendor integration)
   - ✅ Custom (webhook-based fulfillment)
-- ✅ **Data Models**: Complete domain models with GORM ORM integration
+- ✅ **Data Models**: Complete domain models with JSON encoding for BoltDB storage
 - ✅ **API Layer**: RESTful endpoints for public and admin operations
 - ✅ **Integration Tests**: Comprehensive handler and model tests
-- ✅ **Deployment**: Docker Compose with PostgreSQL and mock paywall
+- ✅ **Deployment**: Docker Compose with BoltDB embedded database and mock paywall
 - ✅ **Documentation**: Architecture diagrams, configuration guides, contributing guidelines
 
 ---
@@ -98,13 +98,12 @@ type FulfillmentHandler interface {
 
 ### 2. Data Models (pkg/models/models.go)
 
-Core entities with GORM support:
+Core entities with JSON encoding for BoltDB storage:
 - **Category**: Item categorization with ordering and metadata
 - **Tag**: Searchable tags for items with many-to-many relationship
 - **Item**: Product with backend type mapping and configuration
 - **Payment**: Transaction record with confirmation and fulfillment tracking
 - **FormSubmission**: User-submitted form data (addresses, custom fields)
-- **JSONMap**: Custom PostgreSQL JSONB type wrapper
 
 ### 3. Handler Implementations (internal/handlers/)
 
@@ -277,7 +276,7 @@ docker-compose up -d
 
 **Services Started:**
 - **Store API**: http://localhost:8080
-- **PostgreSQL**: localhost:5432
+- **BoltDB**: Embedded database at ./data/store.db
 - **Mock Paywall**: http://localhost:8081
 
 ### Production Deployment
@@ -291,10 +290,11 @@ docker push myregistry/store:latest
 
 # Deploy via orchestration (K8s, Docker Swarm, etc.)
 # Set environment variables:
-# - STORE_DATABASE_URL (external PostgreSQL)
+# - STORE_DATABASE_PATH (path to BoltDB file)
 # - STORE_PAYWALL_URL (production paywall)
 # - STORE_ADMIN_TOKEN (secure token)
 # - TLS_CERT, TLS_KEY (HTTPS)
+# Mount persistent volume for BoltDB data directory
 ```
 
 ---
@@ -442,7 +442,7 @@ Documented in DESIGN.md Section 11:
 ✅ **Validation**
 - Input validation at API layer
 - Handler configuration validation before save
-- GORM parameterized queries prevent SQL injection
+- BoltDB transactions ensure data consistency
 
 ✅ **Communication**
 - HTTPS support via TLS_CERT/TLS_KEY env vars
@@ -460,8 +460,8 @@ Documented in DESIGN.md Section 11:
 
 Go module dependencies are minimal and production-grade:
 - **gorilla/mux**: HTTP router
-- **gorm**: Database ORM  
-- **postgres driver**: PostgreSQL connectivity
+- **go.etcd.io/bbolt**: BoltDB embedded database
+- **aws-sdk-go**: AWS S3 integration (for digital media storage)
 - **uuid**: UUID generation
 - **godotenv**: Environment file support
 
@@ -472,17 +472,16 @@ Go module dependencies are minimal and production-grade:
 ### Database
 
 ```bash
-# Connect to PostgreSQL
-psql $STORE_DATABASE_URL
+# BoltDB is an embedded file-based database
+# Data is stored in the file specified by STORE_DATABASE_PATH
+# Default location: ./data/store.db
 
-# View tables
-\dt
+# To inspect the database, use the bolt CLI tool:
+go install go.etcd.io/bbolt/cmd/bolt@latest
+bolt info ./data/store.db
+bolt buckets ./data/store.db
 
-# Check payment status
-SELECT id, status, created_at FROM payments LIMIT 10;
-
-# Clear test data
-DELETE FROM payments WHERE created_at < NOW() - INTERVAL '7 days';
+# Or write a simple Go script to query data
 ```
 
 ### Monitoring
@@ -576,7 +575,7 @@ All success criteria have been met or exceeded. The system is ready for:
 
 **Next Steps:**
 1. Replace mock paywall with production opd-ai/paywall
-2. Configure PostgreSQL with persistent data
+2. Configure BoltDB data persistence with volume mounting
 3. Deploy via Docker/Kubernetes to preferred infrastructure
 4. Customize templates and branding
 5. Implement additional handlers as needed

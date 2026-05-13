@@ -22,52 +22,49 @@ This guide helps you diagnose and resolve common issues with opd-ai/store. Issue
 ### Symptom: "Failed to connect to database: connection refused"
 
 **Possible Causes:**
-1. PostgreSQL is not running
-2. Incorrect connection string
-3. Firewall blocking connection
-4. Database doesn't exist
+1. BoltDB file path is incorrect
+2. File permissions issue
+3. Disk space full
+4. Directory doesn't exist
 
 **Solutions:**
 
-**1. Verify PostgreSQL is running:**
+**1. Verify BoltDB configuration:**
 ```bash
-# Check if PostgreSQL is running
-sudo systemctl status postgresql
+# Check the database path
+echo $STORE_DATABASE_PATH
 
-# Start if not running
-sudo systemctl start postgresql
+# Verify directory exists
+ls -la $(dirname $STORE_DATABASE_PATH)
 ```
 
-**2. Test connection manually:**
+**2. Check file permissions:**
 ```bash
-psql "postgres://user:pass@localhost:5432/store_db"
+# Ensure the directory is writable
+sudo chown -R $(whoami):$(whoami) $(dirname $STORE_DATABASE_PATH)
+chmod 755 $(dirname $STORE_DATABASE_PATH)
 ```
 
-If connection fails, check:
-- Username and password are correct
-- Database exists: `psql -U postgres -l`
-- Host and port are correct
-
-**3. Check firewall:**
+**3. Check disk space:**
 ```bash
-# Allow PostgreSQL through firewall
-sudo ufw allow 5432/tcp
+# Verify available disk space
+df -h $(dirname $STORE_DATABASE_PATH)
 ```
 
-**4. Verify `STORE_DATABASE_URL`:**
+**4. Verify `STORE_DATABASE_PATH`:**
 ```bash
-echo $STORE_DATABASE_URL
-# Should be: postgres://user:password@host:port/database
+echo $STORE_DATABASE_PATH
+# Should be: /path/to/store.db
 ```
 
 ---
 
-### Symptom: "Failed to run migrations: relation already exists"
+### Symptom: "Database file is locked" or "timeout"
 
 **Possible Causes:**
-1. Migrations running multiple times simultaneously
-2. Manual schema changes conflicting with auto-migrate
-3. Partial migration failure
+1. Multiple processes accessing the same database file
+2. Process crashed without releasing lock
+3. Network filesystem with stale lock
 
 **Solutions:**
 
@@ -75,59 +72,21 @@ echo $STORE_DATABASE_URL
 ```bash
 # Ensure only one instance is running
 ps aux | grep store
+killall -9 store  # If needed
 ```
 
-**2. Manually fix schema:**
-```sql
--- Connect to database
-psql $STORE_DATABASE_URL
-
--- Check existing tables
-\dt
-
--- Drop conflicting table (CAUTION: data loss)
-DROP TABLE IF EXISTS problem_table CASCADE;
-
--- Let auto-migrate recreate it
+**2. Remove stale lock file:**
+```bash
+# BoltDB doesn't use separate lock files, but restart the service
+sudo systemctl restart store
 ```
 
-**3. Use transaction-safe migrations:**
+**3. Verify single-server deployment:**
 
-For production, consider using [golang-migrate](https://github.com/golang-migrate/migrate) instead of auto-migrate.
-
----
-
-### Symptom: "Too many connections" / "Connection pool exhausted"
-
-**Possible Causes:**
-1. Connection leak (connections not being closed)
-2. Pool size too small for load
-3. Long-running queries
-
-**Solutions:**
-
-**1. Check active connections:**
-```sql
-SELECT count(*) FROM pg_stat_activity WHERE datname = 'store_db';
-```
-
-**2. Increase pool size:**
-
-In your database connection string:
-```
-postgres://user:pass@host:port/db?pool_max_conns=50&pool_min_conns=10
-```
-
-Or programmatically:
-```go
-sqlDB, _ := db.DB()
-sqlDB.SetMaxOpenConns(50)
-sqlDB.SetMaxIdleConns(10)
-```
-
-**3. Find slow queries:**
-```sql
-SELECT pid, now() - pg_stat_activity.query_start AS duration, query 
+BoltDB does not support concurrent access from multiple servers. If you need high availability, consider:
+- Using a load balancer with sticky sessions
+- Replicating the database file (read-only replicas)
+- Migrating to a distributed database for multi-server deployments 
 FROM pg_stat_activity 
 WHERE state = 'active' AND now() - pg_stat_activity.query_start > interval '30 seconds';
 ```
@@ -738,7 +697,7 @@ EnvironmentFile=/etc/store/config.env
 
 Pass environment variables:
 ```bash
-docker run -e STORE_DATABASE_URL=postgres://... opd-ai/store
+docker run -e STORE_DATABASE_PATH=/app/data/store.db -v store_data:/app/data opd-ai/store
 ```
 
 Or use env file:
@@ -814,22 +773,54 @@ curl http://localhost:8080/health
 
 ### Query Database Directly
 
+BoltDB is a file-based database. To inspect data, use the bolt CLI or write a simple Go script:
+
 ```bash
-psql $STORE_DATABASE_URL
+# Install bolt CLI tool
+go install go.etcd.io/bbolt/cmd/bolt@latest
 
--- Check recent payments
-SELECT id, status, amount, currency, created_at 
-FROM payments 
-ORDER BY created_at DESC 
-LIMIT 10;
+# View database info
+bolt info $STORE_DATABASE_PATH
 
--- Check items
-SELECT id, name, backend_type, active 
-FROM items 
-WHERE active = true;
+# List buckets
+bolt buckets $STORE_DATABASE_PATH
 
--- Check categories
-SELECT id, name, slug FROM categories;
+# Get specific key (example)
+bolt get $STORE_DATABASE_PATH payments pay_abc123
+```
+
+Or create a simple query script:
+
+```go
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+
+	bolt "go.etcd.io/bbolt"
+)
+
+func main() {
+	db, _ := bolt.Open("./data/store.db", 0600, nil)
+	defer db.Close()
+	
+	db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("payments"))
+		c := b.Cursor()
+		
+		// Print last 10 payments
+		count := 0
+		for k, v := c.Last(); k != nil && count < 10; k, v = c.Prev() {
+			var payment map[string]interface{}
+			json.Unmarshal(v, &payment)
+			fmt.Printf("%s: %v\n", k, payment)
+			count++
+		}
+		return nil
+	})
+}
 ```
 
 ### Test Handlers
@@ -913,7 +904,7 @@ curl http://localhost:6060/debug/pprof/goroutine?debug=1
 ### What to Include in Bug Reports
 
 - **Version**: `git rev-parse HEAD` or Docker image tag
-- **Environment**: OS, Go version, PostgreSQL version
+- **Environment**: OS, Go version, BoltDB version
 - **Configuration**: Relevant environment variables (REDACT SECRETS)
 - **Logs**: Full error messages and stack traces
 - **Steps to reproduce**: Exact commands that trigger the issue

@@ -289,8 +289,8 @@ go test -short ./...
 
 ## Performance Considerations
 
-- Use prepared statements for database queries (GORM handles this)
-- Implement connection pooling for databases
+- Use efficient BoltDB transaction patterns (batch writes when possible)
+- Implement proper database bucket organization
 - Cache frequently accessed data
 - Use indexes on frequently queried fields
 
@@ -299,7 +299,7 @@ go test -short ./...
 - Never commit secrets or API keys
 - Use environment variables for sensitive config
 - Validate and sanitize user input
-- Use parameterized queries (GORM protects against SQL injection)
+- Use proper database transaction handling to ensure data consistency
 - Add HTTPS support for production
 
 ## Pull Request Checklist

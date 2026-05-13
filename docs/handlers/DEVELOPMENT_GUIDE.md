@@ -623,14 +623,20 @@ Test the full workflow with a real database:
 
 ```go
 func TestYourHandler_Integration(t *testing.T) {
-    // Setup in-memory database
-    db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+    // Setup temporary BoltDB database
+    tmpDir := t.TempDir()
+    dbPath := filepath.Join(tmpDir, "test.db")
+    
+    db, err := bolt.Open(dbPath, 0600, nil)
     if err != nil {
         t.Fatalf("Failed to open database: %v", err)
     }
+    defer db.Close()
 
-    // Migrate models
-    db.AutoMigrate(&models.Item{}, &models.Payment{})
+    // Initialize buckets
+    if err := dbpkg.InitBuckets(db); err != nil {
+        t.Fatalf("Failed to initialize buckets: %v", err)
+    }
 
     // Create registry and register handler
     registry := handler.NewRegistry()
@@ -766,10 +772,10 @@ If your handler needs database access, accept it in the constructor:
 
 ```go
 type YourHandler struct {
-    db *gorm.DB
+    db *bolt.DB
 }
 
-func NewYourHandler(db *gorm.DB) *YourHandler {
+func NewYourHandler(db *bolt.DB) *YourHandler {
     return &YourHandler{db: db}
 }
 ```
