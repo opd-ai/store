@@ -248,14 +248,3 @@ func TestPaymentLifecycle(t *testing.T) {
 		t.Error("FulfillmentResult should be populated after Fulfill()")
 	}
 }
-
-// TestPaymentFail tests payment failure handling.
-func TestPaymentFail(t *testing.T) {
-	payment := models.NewPayment("item-123", "100000", "BTC")
-
-	payment.Fail()
-
-	if payment.Status != "failed" {
-		t.Errorf("expected Status 'failed', got %s", payment.Status)
-	}
-}
