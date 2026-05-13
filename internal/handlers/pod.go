@@ -25,21 +25,10 @@ func (h *PrintOnDemandHandler) Handle(ctx context.Context, payment *models.Payme
 		return nil, handler.ErrPaymentNotConfirmed
 	}
 
-	// Extract PoD configuration from item backend config
-	backendConfig := item.BackendConfig
-	if backendConfig == nil {
-		return nil, fmt.Errorf("missing backend configuration")
-	}
-
-	providerName, ok := backendConfig["provider"].(string)
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid provider in configuration")
-	}
-
-	// Extract API key
-	apiKey, ok := backendConfig["api_key"].(string)
-	if !ok || apiKey == "" {
-		return nil, fmt.Errorf("missing or invalid api_key in configuration")
+	// Extract provider configuration
+	providerName, apiKey, err := extractProviderConfig(item.BackendConfig)
+	if err != nil {
+		return nil, err
 	}
 
 	// Create provider instance
@@ -48,52 +37,20 @@ func (h *PrintOnDemandHandler) Handle(ctx context.Context, payment *models.Payme
 		return nil, fmt.Errorf("failed to create provider: %w", err)
 	}
 
-	// Extract product mapping
-	productMapping, ok := backendConfig["product_mapping"].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("missing or invalid product_mapping in configuration")
+	// Extract variant ID for this item
+	variantID, err := extractVariantID(item.BackendConfig, item.ID)
+	if err != nil {
+		return nil, err
 	}
 
-	// Get the variant ID for this item
-	itemMapping, ok := productMapping[item.ID].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("no product mapping found for item %s", item.ID)
-	}
-
-	variantID, _ := itemMapping["variant_id"].(string)
-	if variantID == "" {
-		// Try as float64 (JSON number)
-		if variantFloat, ok := itemMapping["variant_id"].(float64); ok {
-			variantID = fmt.Sprintf("%.0f", variantFloat)
-		} else {
-			return nil, fmt.Errorf("missing or invalid variant_id in product mapping")
-		}
-	}
-
-	// Extract recipient information from payer info
+	// Extract recipient information
 	recipientInfo, err := extractRecipientFromPayerInfo(payment.PayerInfo)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract recipient info: %w", err)
 	}
 
 	// Build order request
-	orderReq := &pod.OrderRequest{
-		RecipientName:    recipientInfo.Name,
-		RecipientAddress: recipientInfo.Address,
-		RecipientCity:    recipientInfo.City,
-		RecipientState:   recipientInfo.State,
-		RecipientZip:     recipientInfo.Zip,
-		RecipientCountry: recipientInfo.Country,
-		RecipientEmail:   recipientInfo.Email,
-		RecipientPhone:   recipientInfo.Phone,
-		VariantID:        variantID,
-		Quantity:         1,
-	}
-
-	// Extract design URL if provided
-	if designURL, ok := itemMapping["design_url"].(string); ok {
-		orderReq.DesignURL = designURL
-	}
+	orderReq := buildOrderRequest(recipientInfo, variantID, item.BackendConfig, item.ID)
 
 	// Create order with provider
 	orderResp, err := provider.CreateOrder(ctx, orderReq)
@@ -110,6 +67,77 @@ func (h *PrintOnDemandHandler) Handle(ctx context.Context, payment *models.Payme
 		"shipping_date": orderResp.ShippingDate,
 		"created_at":    orderResp.CreatedAt,
 	}, nil
+}
+
+// extractProviderConfig extracts provider name and API key from backend config.
+func extractProviderConfig(backendConfig models.JSONMap) (string, string, error) {
+	if backendConfig == nil {
+		return "", "", fmt.Errorf("missing backend configuration")
+	}
+
+	providerName, ok := backendConfig["provider"].(string)
+	if !ok {
+		return "", "", fmt.Errorf("missing or invalid provider in configuration")
+	}
+
+	apiKey, ok := backendConfig["api_key"].(string)
+	if !ok || apiKey == "" {
+		return "", "", fmt.Errorf("missing or invalid api_key in configuration")
+	}
+
+	return providerName, apiKey, nil
+}
+
+// extractVariantID extracts the variant ID for a specific item from the product mapping.
+func extractVariantID(backendConfig models.JSONMap, itemID string) (string, error) {
+	productMapping, ok := backendConfig["product_mapping"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("missing or invalid product_mapping in configuration")
+	}
+
+	itemMapping, ok := productMapping[itemID].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("no product mapping found for item %s", itemID)
+	}
+
+	variantID, _ := itemMapping["variant_id"].(string)
+	if variantID == "" {
+		// Try as float64 (JSON number)
+		if variantFloat, ok := itemMapping["variant_id"].(float64); ok {
+			variantID = fmt.Sprintf("%.0f", variantFloat)
+		} else {
+			return "", fmt.Errorf("missing or invalid variant_id in product mapping")
+		}
+	}
+
+	return variantID, nil
+}
+
+// buildOrderRequest creates an order request from recipient info and configuration.
+func buildOrderRequest(recipient *recipientInfo, variantID string, backendConfig models.JSONMap, itemID string) *pod.OrderRequest {
+	orderReq := &pod.OrderRequest{
+		RecipientName:    recipient.Name,
+		RecipientAddress: recipient.Address,
+		RecipientCity:    recipient.City,
+		RecipientState:   recipient.State,
+		RecipientZip:     recipient.Zip,
+		RecipientCountry: recipient.Country,
+		RecipientEmail:   recipient.Email,
+		RecipientPhone:   recipient.Phone,
+		VariantID:        variantID,
+		Quantity:         1,
+	}
+
+	// Extract design URL if provided
+	if productMapping, ok := backendConfig["product_mapping"].(map[string]interface{}); ok {
+		if itemMapping, ok := productMapping[itemID].(map[string]interface{}); ok {
+			if designURL, ok := itemMapping["design_url"].(string); ok {
+				orderReq.DesignURL = designURL
+			}
+		}
+	}
+
+	return orderReq
 }
 
 // recipientInfo holds structured recipient data.

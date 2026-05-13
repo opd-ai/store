@@ -98,99 +98,26 @@ func NewClient(apiKey string) *Client {
 	}
 }
 
-// CreateOrder creates a new order with Printful.
-func (c *Client) CreateOrder(ctx context.Context, orderReq *OrderRequest) (*Order, error) {
-	body, err := json.Marshal(orderReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal order request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/orders", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	var pfResp printfulResponse
-	if err := json.Unmarshal(bodyBytes, &pfResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if pfResp.Code != 200 && pfResp.Code != 201 {
-		if pfResp.Error != nil {
-			return nil, fmt.Errorf("printful API error (code %d): %s", pfResp.Error.Code, pfResp.Error.Message)
+// doRequest performs an HTTP request to the Printful API and decodes the response.
+// If result is nil, the response body is not decoded (useful for DELETE requests).
+func (c *Client) doRequest(ctx context.Context, method, endpoint string, body interface{}, result interface{}) error {
+	var reqBody io.Reader
+	if body != nil {
+		jsonData, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("failed to marshal request: %w", err)
 		}
-		return nil, fmt.Errorf("unexpected status code %d: %s", pfResp.Code, string(bodyBytes))
+		reqBody = bytes.NewReader(jsonData)
 	}
 
-	var order Order
-	if err := json.Unmarshal(pfResp.Result, &order); err != nil {
-		return nil, fmt.Errorf("failed to decode order result: %w", err)
-	}
-
-	return &order, nil
-}
-
-// GetOrderStatus retrieves the status of an order.
-func (c *Client) GetOrderStatus(ctx context.Context, orderID string) (*OrderStatus, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/orders/"+orderID, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	var pfResp printfulResponse
-	if err := json.Unmarshal(bodyBytes, &pfResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if pfResp.Code != 200 {
-		if pfResp.Error != nil {
-			return nil, fmt.Errorf("printful API error (code %d): %s", pfResp.Error.Code, pfResp.Error.Message)
-		}
-		return nil, fmt.Errorf("unexpected status code %d: %s", pfResp.Code, string(bodyBytes))
-	}
-
-	var status OrderStatus
-	if err := json.Unmarshal(pfResp.Result, &status); err != nil {
-		return nil, fmt.Errorf("failed to decode order status result: %w", err)
-	}
-
-	return &status, nil
-}
-
-// CancelOrder cancels an existing order.
-func (c *Client) CancelOrder(ctx context.Context, orderID string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+"/orders/"+orderID, nil)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+endpoint, reqBody)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
 	resp, err := c.httpClient.Do(req)
@@ -209,12 +136,43 @@ func (c *Client) CancelOrder(ctx context.Context, orderID string) error {
 		return fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	if pfResp.Code != 200 {
+	// Check for successful status codes (200 or 201 for creates)
+	if pfResp.Code != 200 && pfResp.Code != 201 {
 		if pfResp.Error != nil {
 			return fmt.Errorf("printful API error (code %d): %s", pfResp.Error.Code, pfResp.Error.Message)
 		}
 		return fmt.Errorf("unexpected status code %d: %s", pfResp.Code, string(bodyBytes))
 	}
 
+	// Decode result if provided
+	if result != nil {
+		if err := json.Unmarshal(pfResp.Result, result); err != nil {
+			return fmt.Errorf("failed to decode result: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// CreateOrder creates a new order with Printful.
+func (c *Client) CreateOrder(ctx context.Context, orderReq *OrderRequest) (*Order, error) {
+	var order Order
+	if err := c.doRequest(ctx, http.MethodPost, "/orders", orderReq, &order); err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
+// GetOrderStatus retrieves the status of an order.
+func (c *Client) GetOrderStatus(ctx context.Context, orderID string) (*OrderStatus, error) {
+	var status OrderStatus
+	if err := c.doRequest(ctx, http.MethodGet, "/orders/"+orderID, nil, &status); err != nil {
+		return nil, err
+	}
+	return &status, nil
+}
+
+// CancelOrder cancels an existing order.
+func (c *Client) CancelOrder(ctx context.Context, orderID string) error {
+	return c.doRequest(ctx, http.MethodDelete, "/orders/"+orderID, nil, nil)
 }

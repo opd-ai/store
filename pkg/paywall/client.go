@@ -49,6 +49,39 @@ func NewClient(baseURL, apiKey string) *Client {
 	}
 }
 
+// doRequest performs an HTTP POST request and decodes the JSON response.
+func (c *Client) doRequest(ctx context.Context, endpoint string, reqBody interface{}, respBody interface{}) error {
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+endpoint, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(respBody); err != nil {
+		return fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return nil
+}
+
 // CreateInvoice creates a new payment invoice.
 func (c *Client) CreateInvoice(ctx context.Context, amount, currency, callbackURL string) (*Invoice, error) {
 	reqBody := map[string]string{
@@ -57,33 +90,9 @@ func (c *Client) CreateInvoice(ctx context.Context, amount, currency, callbackUR
 		"callback_url": callbackURL,
 	}
 
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/create-payment", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
 	var invoice Invoice
-	if err := json.NewDecoder(resp.Body).Decode(&invoice); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	if err := c.doRequest(ctx, "/create-payment", reqBody, &invoice); err != nil {
+		return nil, err
 	}
 
 	return &invoice, nil
@@ -96,33 +105,9 @@ func (c *Client) GetInvoiceStatus(ctx context.Context, invoiceID string) (*Invoi
 		"tx_hash":    "", // Empty for status check
 	}
 
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/verify-payment", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
 	var status InvoiceStatus
-	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	if err := c.doRequest(ctx, "/verify-payment", reqBody, &status); err != nil {
+		return nil, err
 	}
 
 	return &status, nil

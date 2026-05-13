@@ -521,20 +521,7 @@ func (h *Handler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 
 // DeleteCategory deletes a category.
 func (h *Handler) DeleteCategory(w http.ResponseWriter, r *http.Request) {
-	if err := requireAdminToken(r); err != nil {
-		sendError(w, http.StatusUnauthorized, "Unauthorized")
-		return
-	}
-
-	vars := mux.Vars(r)
-	id := vars["id"]
-
-	if err := h.store.DeleteCategory(r.Context(), id); err != nil {
-		sendError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	sendJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	h.handleDelete(w, r, h.store.DeleteCategory)
 }
 
 // CreateItem creates a new item.
@@ -600,6 +587,17 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateItem updates an item.
+// updateItemRequest represents a request to update an item.
+type updateItemRequest struct {
+	Name          string         `json:"name"`
+	Description   string         `json:"description"`
+	Price         string         `json:"price"`
+	Currency      string         `json:"currency"`
+	BackendType   string         `json:"backend_type"`
+	BackendConfig models.JSONMap `json:"backend_config"`
+	Active        *bool          `json:"active"`
+}
+
 func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	if err := requireAdminToken(r); err != nil {
 		sendError(w, http.StatusUnauthorized, "Unauthorized")
@@ -609,22 +607,25 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id := vars["id"]
 
-	var req struct {
-		Name          string         `json:"name"`
-		Description   string         `json:"description"`
-		Price         string         `json:"price"`
-		Currency      string         `json:"currency"`
-		BackendType   string         `json:"backend_type"`
-		BackendConfig models.JSONMap `json:"backend_config"`
-		Active        *bool          `json:"active"`
-	}
-
+	var req updateItemRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendError(w, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 
+	updates := buildItemUpdates(&req)
+	if err := h.store.UpdateItem(r.Context(), id, updates); err != nil {
+		sendError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	sendJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+// buildItemUpdates constructs the updates map from the request fields.
+func buildItemUpdates(req *updateItemRequest) map[string]interface{} {
 	updates := make(map[string]interface{})
+
 	if req.Name != "" {
 		updates["name"] = req.Name
 	}
@@ -647,30 +648,12 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 		updates["active"] = *req.Active
 	}
 
-	if err := h.store.UpdateItem(r.Context(), id, updates); err != nil {
-		sendError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	sendJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+	return updates
 }
 
 // DeleteItem deletes an item.
 func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request) {
-	if err := requireAdminToken(r); err != nil {
-		sendError(w, http.StatusUnauthorized, "Unauthorized")
-		return
-	}
-
-	vars := mux.Vars(r)
-	id := vars["id"]
-
-	if err := h.store.DeleteItem(r.Context(), id); err != nil {
-		sendError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	sendJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	h.handleDelete(w, r, h.store.DeleteItem)
 }
 
 // CreateTag creates a new tag.
@@ -748,20 +731,7 @@ func (h *Handler) UpdateTag(w http.ResponseWriter, r *http.Request) {
 
 // DeleteTag deletes a tag.
 func (h *Handler) DeleteTag(w http.ResponseWriter, r *http.Request) {
-	if err := requireAdminToken(r); err != nil {
-		sendError(w, http.StatusUnauthorized, "Unauthorized")
-		return
-	}
-
-	vars := mux.Vars(r)
-	id := vars["id"]
-
-	if err := h.store.DeleteTag(r.Context(), id); err != nil {
-		sendError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	sendJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	h.handleDelete(w, r, h.store.DeleteTag)
 }
 
 // AddItemTag associates a tag with an item.
@@ -954,6 +924,24 @@ func (h *Handler) WebhookPaymentConfirmed(w http.ResponseWriter, r *http.Request
 }
 
 // Helper functions
+
+// handleDelete is a generic handler for delete operations.
+func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request, deleteFn func(ctx context.Context, id string) error) {
+	if err := requireAdminToken(r); err != nil {
+		sendError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	vars := mux.Vars(r)
+	id := vars["id"]
+
+	if err := deleteFn(r.Context(), id); err != nil {
+		sendError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	sendJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
 
 func sendJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")

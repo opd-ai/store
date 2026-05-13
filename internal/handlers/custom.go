@@ -92,10 +92,21 @@ func (h *CustomHandler) invokeWebhook(ctx context.Context, webhookURL string, pa
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Add headers
 	req.Header.Set("Content-Type", "application/json")
+	addCustomHeaders(req, config)
 
-	// Add custom headers from config
+	// Execute request and get response body
+	respBody, statusCode, err := h.executeRequest(req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse and validate response
+	return parseWebhookResponse(respBody, statusCode)
+}
+
+// addCustomHeaders adds custom headers from configuration to the request.
+func addCustomHeaders(req *http.Request, config models.JSONMap) {
 	if headers, ok := config["webhook_headers"].(map[string]interface{}); ok {
 		for key, value := range headers {
 			if strVal, ok := value.(string); ok {
@@ -103,26 +114,30 @@ func (h *CustomHandler) invokeWebhook(ctx context.Context, webhookURL string, pa
 			}
 		}
 	}
+}
 
-	// Execute request
+// executeRequest executes an HTTP request and returns the response body and status code.
+func (h *CustomHandler) executeRequest(req *http.Request) ([]byte, int, error) {
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("webhook request failed: %w", err)
+		return nil, 0, fmt.Errorf("webhook request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Read response body
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+		return nil, resp.StatusCode, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	// Check response status
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("webhook returned status %d: %s", resp.StatusCode, string(respBody))
+	return respBody, resp.StatusCode, nil
+}
+
+// parseWebhookResponse parses the webhook response and validates the status code.
+func parseWebhookResponse(respBody []byte, statusCode int) (map[string]interface{}, error) {
+	if statusCode < 200 || statusCode >= 300 {
+		return nil, fmt.Errorf("webhook returned status %d: %s", statusCode, string(respBody))
 	}
 
-	// Parse response
 	var result map[string]interface{}
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse webhook response: %w", err)
