@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: store_user
+      POSTGRES_PASSWORD: store_password
+      POSTGRES_DB: store_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U store_user -d store_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - store_network
+
+  # Mock PayWall service for testing
+  # In production, replace with actual opd-ai/paywall deployment
+  paywall-mock:
+    image: golang:1.21-alpine
+    working_dir: /app
+    volumes:
+      - ./deployments/mocks:/app
+    command: go run mock_paywall.go
+    ports:
+      - "8081:8081"
+    environment:
+      PAYWALL_PORT: "8081"
+    networks:
+      - store_network
+
+  # Main store service
+  store:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      # Database configuration
+      STORE_DATABASE_URL: "postgres://store_user:store_password@postgres:5432/store_db"
+      STORE_DATABASE_MAX_CONNS: "25"
+      
+      # Server configuration
+      STORE_PORT: "8080"
+      STORE_HOST: "0.0.0.0"
+      
+      # Paywall integration
+      STORE_PAYWALL_URL: "http://paywall-mock:8081"
+      
+      # Admin token for API authentication
+      STORE_ADMIN_TOKEN: "admin-secret-token-12345"
+      
+      # File storage
+      STORE_TEMPLATES_DIR: "/app/templates"
+      STORE_UPLOADS_DIR: "/app/data/uploads"
+      
+      # Logging
+      STORE_LOG_LEVEL: "debug"
+      STORE_LOG_FORMAT: "json"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      paywall-mock:
+        condition: service_started
+    volumes:
+      - ./templates:/app/templates
+      - ./data:/app/data
+    networks:
+      - store_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  store_network:
+    driver: bridge
