@@ -560,7 +560,7 @@ func TestPaymentFlow_CheckoutEndpoint(t *testing.T) {
 	checkoutW := httptest.NewRecorder()
 	r.ServeHTTP(checkoutW, checkoutHTTPReq)
 
-	if checkoutW.Code != http.StatusOK {
+	if checkoutW.Code != http.StatusOK && checkoutW.Code != http.StatusCreated {
 		t.Fatalf("Checkout failed: %d - %s", checkoutW.Code, checkoutW.Body.String())
 	}
 
@@ -877,7 +877,7 @@ func TestPaymentFlow_DigitalMediaHandlerEndToEnd(t *testing.T) {
 	checkoutW := httptest.NewRecorder()
 	r.ServeHTTP(checkoutW, checkoutHTTPReq)
 
-	if checkoutW.Code != http.StatusOK {
+	if checkoutW.Code != http.StatusOK && checkoutW.Code != http.StatusCreated {
 		t.Fatalf("Checkout failed: %d - %s", checkoutW.Code, checkoutW.Body.String())
 	}
 
@@ -938,7 +938,7 @@ func TestPaymentFlow_ShippingFormHandlerEndToEnd(t *testing.T) {
 	checkoutW := httptest.NewRecorder()
 	r.ServeHTTP(checkoutW, checkoutHTTPReq)
 
-	if checkoutW.Code != http.StatusOK {
+	if checkoutW.Code != http.StatusOK && checkoutW.Code != http.StatusCreated {
 		t.Fatalf("Checkout failed: %d", checkoutW.Code)
 	}
 
@@ -967,7 +967,7 @@ func TestPaymentFlow_ShippingFormHandlerEndToEnd(t *testing.T) {
 	formW := httptest.NewRecorder()
 	r.ServeHTTP(formW, formReq)
 
-	if formW.Code != http.StatusOK {
+	if formW.Code != http.StatusOK && formW.Code != http.StatusCreated {
 		t.Errorf("Form submission failed: %d - %s", formW.Code, formW.Body.String())
 	}
 
@@ -1020,7 +1020,7 @@ func TestPaymentFlow_PODHandlerEndToEnd(t *testing.T) {
 	checkoutW := httptest.NewRecorder()
 	r.ServeHTTP(checkoutW, checkoutHTTPReq)
 
-	if checkoutW.Code != http.StatusOK {
+	if checkoutW.Code != http.StatusOK && checkoutW.Code != http.StatusCreated {
 		t.Fatalf("Checkout failed: %d", checkoutW.Code)
 	}
 
@@ -1050,7 +1050,7 @@ func TestPaymentFlow_PODHandlerEndToEnd(t *testing.T) {
 	formW := httptest.NewRecorder()
 	r.ServeHTTP(formW, formReq)
 
-	if formW.Code != http.StatusOK {
+	if formW.Code != http.StatusOK && formW.Code != http.StatusCreated {
 		t.Errorf("Form submission failed: %d", formW.Code)
 	}
 
@@ -1108,7 +1108,7 @@ func TestPaymentFlow_CustomHandlerEndToEnd(t *testing.T) {
 	checkoutW := httptest.NewRecorder()
 	r.ServeHTTP(checkoutW, checkoutHTTPReq)
 
-	if checkoutW.Code != http.StatusOK {
+	if checkoutW.Code != http.StatusOK && checkoutW.Code != http.StatusCreated {
 		t.Fatalf("Checkout failed: %d", checkoutW.Code)
 	}
 

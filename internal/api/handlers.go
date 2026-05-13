@@ -312,7 +312,9 @@ func (h *Handler) ListPayments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendJSON(w, http.StatusOK, payments)
+	sendJSON(w, http.StatusOK, map[string]interface{}{
+		"payments": payments,
+	})
 }
 
 // ConfirmPayment confirms a payment after paywall verification.

@@ -337,3 +337,565 @@ func TestCustomHandler(t *testing.T) {
 
 	t.Log("CustomHandler test passed")
 }
+
+// ===== Table-Driven Tests =====
+
+// TestDigitalMediaHandler_Validate_TableDriven tests digital media handler validation with various configs.
+func TestDigitalMediaHandler_Validate_TableDriven(t *testing.T) {
+	h := handlers.NewDigitalMediaHandler()
+
+	tests := []struct {
+		name      string
+		config    models.JSONMap
+		wantError bool
+		errorMsg  string
+	}{
+		{
+			name: "valid local storage",
+			config: models.JSONMap{
+				"storage":          "local",
+				"file_path":        "/path/to/file.pdf",
+				"expiration_hours": 24,
+			},
+			wantError: false,
+		},
+		{
+			name: "valid s3 storage",
+			config: models.JSONMap{
+				"storage":          "s3",
+				"file_path":        "product.zip",
+				"s3_bucket":        "my-bucket",
+				"s3_region":        "us-east-1",
+				"expiration_hours": 48,
+			},
+			wantError: false,
+		},
+		{
+			name: "missing storage",
+			config: models.JSONMap{
+				"file_path":        "/path/to/file.pdf",
+				"expiration_hours": 24,
+			},
+			wantError: true,
+			errorMsg:  "storage",
+		},
+		{
+			name: "invalid storage type",
+			config: models.JSONMap{
+				"storage":          "ftp",
+				"file_path":        "/path/to/file.pdf",
+				"expiration_hours": 24,
+			},
+			wantError: true,
+			errorMsg:  "storage",
+		},
+		{
+			name: "missing file_path",
+			config: models.JSONMap{
+				"storage":          "local",
+				"expiration_hours": 24,
+			},
+			wantError: true,
+			errorMsg:  "file_path",
+		},
+		{
+			name: "s3 missing bucket",
+			config: models.JSONMap{
+				"storage":          "s3",
+				"file_path":        "file.pdf",
+				"s3_region":        "us-east-1",
+				"expiration_hours": 24,
+			},
+			wantError: true,
+			errorMsg:  "s3_bucket",
+		},
+		{
+			name: "s3 missing region",
+			config: models.JSONMap{
+				"storage":          "s3",
+				"file_path":        "file.pdf",
+				"s3_bucket":        "my-bucket",
+				"expiration_hours": 24,
+			},
+			wantError: true,
+			errorMsg:  "s3_region",
+		},
+		{
+			name: "negative expiration hours",
+			config: models.JSONMap{
+				"storage":          "local",
+				"file_path":        "/path/to/file.pdf",
+				"expiration_hours": -1,
+			},
+			wantError: true,
+			errorMsg:  "expiration_hours",
+		},
+		{
+			name: "null config fields",
+			config: models.JSONMap{
+				"storage":          nil,
+				"file_path":        nil,
+				"expiration_hours": nil,
+			},
+			wantError: true,
+		},
+		{
+			name:      "empty config",
+			config:    models.JSONMap{},
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := h.Validate(tt.config)
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("expected error for %s, got nil", tt.name)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error for %s: %v", tt.name, err)
+				}
+			}
+		})
+	}
+}
+
+// TestShippingFormHandler_Validate_TableDriven tests shipping form handler validation.
+func TestShippingFormHandler_Validate_TableDriven(t *testing.T) {
+	h := handlers.NewShippingFormHandler()
+
+	tests := []struct {
+		name      string
+		config    models.JSONMap
+		wantError bool
+	}{
+		{
+			name: "valid config with custom fields",
+			config: models.JSONMap{
+				"form_fields": map[string]interface{}{
+					"name": map[string]interface{}{
+						"label":    "Full Name",
+						"required": true,
+					},
+					"address": map[string]interface{}{
+						"label":    "Address",
+						"required": true,
+					},
+				},
+			},
+			wantError: false,
+		},
+		{
+			name:      "empty config (uses defaults)",
+			config:    models.JSONMap{},
+			wantError: false,
+		},
+		{
+			name: "config with additional metadata",
+			config: models.JSONMap{
+				"form_fields": map[string]interface{}{
+					"email": map[string]interface{}{
+						"label":    "Email",
+						"required": true,
+						"type":     "email",
+					},
+				},
+				"instructions": "Please provide shipping details",
+			},
+			wantError: false,
+		},
+		{
+			name: "null form_fields",
+			config: models.JSONMap{
+				"form_fields": nil,
+			},
+			wantError: false, // Should use defaults
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := h.Validate(tt.config)
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("expected error for %s, got nil", tt.name)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error for %s: %v", tt.name, err)
+				}
+			}
+		})
+	}
+}
+
+// TestPrintOnDemandHandler_Validate_TableDriven tests POD handler validation.
+func TestPrintOnDemandHandler_Validate_TableDriven(t *testing.T) {
+	h := handlers.NewPrintOnDemandHandler()
+
+	tests := []struct {
+		name      string
+		config    models.JSONMap
+		wantError bool
+		errorMsg  string
+	}{
+		{
+			name: "valid printful config",
+			config: models.JSONMap{
+				"provider": "printful",
+				"api_key":  "test-api-key",
+				"product_mapping": map[string]interface{}{
+					"item-123": map[string]interface{}{
+						"variant_id": "456",
+					},
+				},
+			},
+			wantError: false,
+		},
+		{
+			name: "valid redbubble config",
+			config: models.JSONMap{
+				"provider": "redbubble",
+				"api_key":  "test-api-key",
+				"product_mapping": map[string]interface{}{
+					"item-123": map[string]interface{}{
+						"variant_id": "rb-456",
+					},
+				},
+			},
+			wantError: false,
+		},
+		{
+			name: "valid teespring config",
+			config: models.JSONMap{
+				"provider": "teespring",
+				"api_key":  "test-api-key",
+				"product_mapping": map[string]interface{}{
+					"item-123": map[string]interface{}{
+						"variant_id": "ts-456",
+					},
+				},
+			},
+			wantError: false,
+		},
+		{
+			name: "missing provider",
+			config: models.JSONMap{
+				"api_key": "test-api-key",
+				"product_mapping": map[string]interface{}{
+					"item-123": map[string]interface{}{
+						"variant_id": "456",
+					},
+				},
+			},
+			wantError: true,
+			errorMsg:  "provider",
+		},
+		{
+			name: "missing api_key",
+			config: models.JSONMap{
+				"provider": "printful",
+				"product_mapping": map[string]interface{}{
+					"item-123": map[string]interface{}{
+						"variant_id": "456",
+					},
+				},
+			},
+			wantError: true,
+			errorMsg:  "api_key",
+		},
+		{
+			name: "missing product_mapping",
+			config: models.JSONMap{
+				"provider": "printful",
+				"api_key":  "test-api-key",
+			},
+			wantError: true,
+			errorMsg:  "product_mapping",
+		},
+		{
+			name: "invalid provider",
+			config: models.JSONMap{
+				"provider": "unknown",
+				"api_key":  "test-api-key",
+				"product_mapping": map[string]interface{}{
+					"item-123": map[string]interface{}{
+						"variant_id": "456",
+					},
+				},
+			},
+			wantError: true,
+			errorMsg:  "provider",
+		},
+		{
+			name: "null provider",
+			config: models.JSONMap{
+				"provider": nil,
+				"api_key":  "test-api-key",
+				"product_mapping": map[string]interface{}{
+					"item-123": map[string]interface{}{
+						"variant_id": "456",
+					},
+				},
+			},
+			wantError: true,
+		},
+		{
+			name:      "empty config",
+			config:    models.JSONMap{},
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := h.Validate(tt.config)
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("expected error for %s, got nil", tt.name)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error for %s: %v", tt.name, err)
+				}
+			}
+		})
+	}
+}
+
+// TestCustomHandler_Validate_TableDriven tests custom handler validation.
+func TestCustomHandler_Validate_TableDriven(t *testing.T) {
+	h := handlers.NewCustomHandler()
+
+	tests := []struct {
+		name      string
+		config    models.JSONMap
+		wantError bool
+		errorMsg  string
+	}{
+		{
+			name: "valid webhook URL",
+			config: models.JSONMap{
+				"webhook_url": "https://example.com/webhook",
+			},
+			wantError: false,
+		},
+		{
+			name: "valid webhook with method",
+			config: models.JSONMap{
+				"webhook_url": "https://api.example.com/fulfill",
+				"method":      "POST",
+			},
+			wantError: false,
+		},
+		{
+			name: "valid webhook with headers",
+			config: models.JSONMap{
+				"webhook_url": "https://api.example.com/fulfill",
+				"headers": map[string]interface{}{
+					"Authorization": "Bearer token123",
+					"Content-Type":  "application/json",
+				},
+			},
+			wantError: false,
+		},
+		{
+			name: "valid webhook with retry config",
+			config: models.JSONMap{
+				"webhook_url": "https://api.example.com/fulfill",
+				"retry_count": 3,
+				"timeout":     30,
+			},
+			wantError: false,
+		},
+		{
+			name: "missing webhook_url",
+			config: models.JSONMap{
+				"method": "POST",
+			},
+			wantError: true,
+			errorMsg:  "webhook_url",
+		},
+		{
+			name: "invalid webhook URL format",
+			config: models.JSONMap{
+				"webhook_url": "not-a-url",
+			},
+			wantError: true,
+			errorMsg:  "webhook_url",
+		},
+		{
+			name: "empty webhook URL",
+			config: models.JSONMap{
+				"webhook_url": "",
+			},
+			wantError: true,
+			errorMsg:  "webhook_url",
+		},
+		{
+			name: "null webhook_url",
+			config: models.JSONMap{
+				"webhook_url": nil,
+			},
+			wantError: true,
+		},
+		{
+			name:      "empty config",
+			config:    models.JSONMap{},
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := h.Validate(tt.config)
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("expected error for %s, got nil", tt.name)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error for %s: %v", tt.name, err)
+				}
+			}
+		})
+	}
+}
+
+// TestDigitalMediaHandler_Handle_PaymentStates tests handler with different payment states.
+func TestDigitalMediaHandler_Handle_PaymentStates(t *testing.T) {
+	h := handlers.NewDigitalMediaHandler()
+	ctx := context.Background()
+
+	validConfig := models.JSONMap{
+		"storage":          "local",
+		"file_path":        "/downloads/test.pdf",
+		"expiration_hours": 24,
+	}
+
+	tests := []struct {
+		name          string
+		paymentStatus string
+		itemConfig    models.JSONMap
+		wantError     bool
+		errorMsg      string
+		checkResult   func(*testing.T, map[string]interface{})
+	}{
+		{
+			name:          "confirmed payment",
+			paymentStatus: "confirmed",
+			itemConfig:    validConfig,
+			wantError:     false,
+			checkResult: func(t *testing.T, result map[string]interface{}) {
+				if _, ok := result["download_url"]; !ok {
+					t.Error("expected download_url in result")
+				}
+				if _, ok := result["expires_at"]; !ok {
+					t.Error("expected expires_at in result")
+				}
+			},
+		},
+		{
+			name:          "pending payment - should fail",
+			paymentStatus: "pending",
+			itemConfig:    validConfig,
+			wantError:     true,
+			errorMsg:      "payment not confirmed",
+		},
+		{
+			name:          "fulfilled payment - should fail (must be confirmed)",
+			paymentStatus: "fulfilled",
+			itemConfig:    validConfig,
+			wantError:     true,
+			errorMsg:      "payment not confirmed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payment := &models.Payment{
+				ID:     models.NewID(),
+				Status: tt.paymentStatus,
+			}
+			item := &models.Item{
+				ID:            models.NewID(),
+				BackendConfig: tt.itemConfig,
+			}
+
+			result, err := h.Handle(ctx, payment, item)
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("expected error for %s, got nil", tt.name)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error for %s: %v", tt.name, err)
+				}
+				if tt.checkResult != nil {
+					tt.checkResult(t, result)
+				}
+			}
+		})
+	}
+}
+
+// TestShippingFormHandler_Handle_PaymentStates tests shipping form handler with payment states.
+func TestShippingFormHandler_Handle_PaymentStates(t *testing.T) {
+	h := handlers.NewShippingFormHandler()
+	ctx := context.Background()
+
+	validConfig := models.JSONMap{
+		"form_fields": map[string]interface{}{
+			"name": map[string]interface{}{
+				"label":    "Name",
+				"required": true,
+			},
+		},
+	}
+
+	tests := []struct {
+		name          string
+		paymentStatus string
+		wantError     bool
+	}{
+		{
+			name:          "confirmed payment",
+			paymentStatus: "confirmed",
+			wantError:     false,
+		},
+		{
+			name:          "fulfilled payment",
+			paymentStatus: "fulfilled",
+			wantError:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payment := &models.Payment{
+				ID:     models.NewID(),
+				Status: tt.paymentStatus,
+			}
+			item := &models.Item{
+				ID:            models.NewID(),
+				BackendConfig: validConfig,
+			}
+
+			result, err := h.Handle(ctx, payment, item)
+			if tt.wantError {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if result == nil {
+					t.Error("expected result, got nil")
+				}
+			}
+		})
+	}
+}
