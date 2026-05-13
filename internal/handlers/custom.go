@@ -147,7 +147,11 @@ func (h *CustomHandler) buildPayload(payment *models.Payment, item *models.Item,
 		payload["item_id"] = item.ID
 	}
 	if _, ok := payload["payment_hash"]; !ok {
-		payload["payment_hash"] = payment.PaymentHash
+		if payment.PaymentHash != nil {
+			payload["payment_hash"] = *payment.PaymentHash
+		} else {
+			payload["payment_hash"] = ""
+		}
 	}
 	if _, ok := payload["payment_id"]; !ok {
 		payload["payment_id"] = payment.ID
@@ -168,7 +172,11 @@ func (h *CustomHandler) expandTemplate(value interface{}, payment *models.Paymen
 		// Replace placeholders
 		result := v
 		result = strings.ReplaceAll(result, "{item_id}", item.ID)
-		result = strings.ReplaceAll(result, "{payment_hash}", payment.PaymentHash)
+		paymentHash := ""
+		if payment.PaymentHash != nil {
+			paymentHash = *payment.PaymentHash
+		}
+		result = strings.ReplaceAll(result, "{payment_hash}", paymentHash)
 		result = strings.ReplaceAll(result, "{payment_id}", payment.ID)
 		result = strings.ReplaceAll(result, "{amount}", payment.Amount)
 		result = strings.ReplaceAll(result, "{currency}", payment.Currency)
