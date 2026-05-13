@@ -20,53 +20,81 @@ func NewPrintOnDemandHandler() *PrintOnDemandHandler {
 
 // Handle implements FulfillmentHandler.
 func (h *PrintOnDemandHandler) Handle(ctx context.Context, payment *models.Payment, item *models.Item) (map[string]interface{}, error) {
-	// Verify payment is confirmed
 	if !payment.IsConfirmed() {
 		return nil, handler.ErrPaymentNotConfirmed
 	}
 
-	// Extract provider configuration
-	providerName, apiKey, err := extractProviderConfig(item.BackendConfig)
+	provider, err := setupProvider(item.BackendConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create provider instance
+	variantID, recipientInfo, err := prepareOrderDetails(item, payment)
+	if err != nil {
+		return nil, err
+	}
+
+	orderResp, err := executeOrder(ctx, provider, variantID, recipientInfo, item)
+	if err != nil {
+		return nil, err
+	}
+
+	return buildOrderResult(provider.Name(), orderResp), nil
+}
+
+// setupProvider creates a provider instance from the backend configuration.
+func setupProvider(backendConfig models.JSONMap) (pod.Provider, error) {
+	providerName, apiKey, err := extractProviderConfig(backendConfig)
+	if err != nil {
+		return nil, err
+	}
+
 	provider, err := pod.NewProvider(providerName, apiKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create provider: %w", err)
 	}
 
-	// Extract variant ID for this item
+	return provider, nil
+}
+
+// prepareOrderDetails extracts variant ID and recipient information.
+func prepareOrderDetails(item *models.Item, payment *models.Payment) (string, *recipientInfo, error) {
 	variantID, err := extractVariantID(item.BackendConfig, item.ID)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 
-	// Extract recipient information
 	recipientInfo, err := extractRecipientFromPayerInfo(payment.PayerInfo)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract recipient info: %w", err)
+		return "", nil, fmt.Errorf("failed to extract recipient info: %w", err)
 	}
 
-	// Build order request
+	return variantID, recipientInfo, nil
+}
+
+// executeOrder creates the order with the provider.
+func executeOrder(ctx context.Context, provider pod.Provider, variantID string, recipientInfo *recipientInfo, item *models.Item) (*pod.OrderResponse, error) {
 	orderReq := buildOrderRequest(recipientInfo, variantID, item.BackendConfig, item.ID)
 
-	// Create order with provider
 	orderResp, err := provider.CreateOrder(ctx, orderReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create order with %s: %w", provider.Name(), err)
 	}
 
+	return orderResp, nil
+}
+
+// buildOrderResult constructs the result map from the order response.
+func buildOrderResult(providerName string, orderResp *pod.OrderResponse) map[string]interface{} {
 	return map[string]interface{}{
-		"provider":      provider.Name(),
+		"provider":      providerName,
 		"order_id":      orderResp.OrderID,
 		"external_id":   orderResp.ExternalID,
 		"status":        orderResp.Status,
 		"tracking_url":  orderResp.TrackingURL,
 		"shipping_date": orderResp.ShippingDate,
 		"created_at":    orderResp.CreatedAt,
-	}, nil
+	}
 }
 
 // extractProviderConfig extracts provider name and API key from backend config.

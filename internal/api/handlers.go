@@ -35,31 +35,27 @@ func NewHandler(s *store.Store, paywallClient *paywall.Client) *Handler {
 // getPaymentOrError retrieves a payment by ID from URL vars or sends a 404 error.
 // Returns nil if the payment was not found (error already sent to client).
 func (h *Handler) getPaymentOrError(w http.ResponseWriter, r *http.Request, varName string) *models.Payment {
-	vars := mux.Vars(r)
-	paymentID := vars[varName]
-
-	payment, err := h.store.GetPayment(r.Context(), paymentID)
-	if err != nil {
-		sendError(w, http.StatusNotFound, "Payment not found")
-		return nil
-	}
-
-	return payment
+	return getResourceOrError(w, r, varName, h.store.GetPayment, "Payment not found")
 }
 
 // getItemOrError retrieves an item by ID from URL vars or sends a 404 error.
 // Returns nil if the item was not found (error already sent to client).
 func (h *Handler) getItemOrError(w http.ResponseWriter, r *http.Request, varName string) *models.Item {
-	vars := mux.Vars(r)
-	itemID := vars[varName]
+	return getResourceOrError(w, r, varName, h.store.GetItem, "Item not found")
+}
 
-	item, err := h.store.GetItem(r.Context(), itemID)
+// getResourceOrError is a generic helper to retrieve a resource by ID from URL vars.
+func getResourceOrError[T any](w http.ResponseWriter, r *http.Request, varName string, getter func(context.Context, string) (*T, error), errMsg string) *T {
+	vars := mux.Vars(r)
+	id := vars[varName]
+
+	resource, err := getter(r.Context(), id)
 	if err != nil {
-		sendError(w, http.StatusNotFound, "Item not found")
+		sendError(w, http.StatusNotFound, errMsg)
 		return nil
 	}
 
-	return item
+	return resource
 }
 
 // JSON response wrapper
@@ -678,29 +674,36 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 func buildItemUpdates(req *updateItemRequest) map[string]interface{} {
 	updates := make(map[string]interface{})
 
-	if req.Name != "" {
-		updates["name"] = req.Name
-	}
-	if req.Description != "" {
-		updates["description"] = req.Description
-	}
-	if req.Price != "" {
-		updates["price"] = req.Price
-	}
-	if req.Currency != "" {
-		updates["currency"] = req.Currency
-	}
-	if req.BackendType != "" {
-		updates["backend_type"] = req.BackendType
-	}
-	if req.BackendConfig != nil {
-		updates["backend_config"] = req.BackendConfig
-	}
-	if req.Active != nil {
-		updates["active"] = *req.Active
-	}
+	addStringField(updates, "name", req.Name)
+	addStringField(updates, "description", req.Description)
+	addStringField(updates, "price", req.Price)
+	addStringField(updates, "currency", req.Currency)
+	addStringField(updates, "backend_type", req.BackendType)
+	addMapField(updates, "backend_config", req.BackendConfig)
+	addBoolPtrField(updates, "active", req.Active)
 
 	return updates
+}
+
+// addStringField adds a string field to updates if it's non-empty.
+func addStringField(updates map[string]interface{}, key, value string) {
+	if value != "" {
+		updates[key] = value
+	}
+}
+
+// addMapField adds a map field to updates if it's non-nil.
+func addMapField(updates map[string]interface{}, key string, value map[string]interface{}) {
+	if value != nil {
+		updates[key] = value
+	}
+}
+
+// addBoolPtrField adds a boolean pointer field to updates if it's non-nil.
+func addBoolPtrField(updates map[string]interface{}, key string, value *bool) {
+	if value != nil {
+		updates[key] = *value
+	}
 }
 
 // DeleteItem deletes an item.

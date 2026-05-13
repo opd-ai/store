@@ -25,94 +25,126 @@ func NewDigitalMediaHandler() *DigitalMediaHandler {
 // Handle executes the digital media fulfillment process.
 // It generates a download URL (pre-signed S3 URL or direct link) and returns it to the client.
 func (h *DigitalMediaHandler) Handle(ctx context.Context, payment *models.Payment, item *models.Item) (map[string]interface{}, error) {
-	// Verify payment is confirmed
-	if payment.Status != "confirmed" {
-		return nil, fmt.Errorf("payment not confirmed")
+	if err := validatePaymentConfirmed(payment); err != nil {
+		return nil, err
 	}
 
 	config := handler.Config{Settings: item.BackendConfig}
 
-	// Get storage type
-	storage := config.GetString("storage")
-	if storage == "" {
-		storage = "local"
+	downloadURL, fileSize, err := h.generateDownloadURL(ctx, item, config)
+	if err != nil {
+		return nil, err
 	}
 
-	var downloadURL string
-	var fileSize int64
+	return buildFulfillmentResult(downloadURL, fileSize, config), nil
+}
+
+// validatePaymentConfirmed checks if the payment is confirmed.
+func validatePaymentConfirmed(payment *models.Payment) error {
+	if payment.Status != "confirmed" {
+		return fmt.Errorf("payment not confirmed")
+	}
+	return nil
+}
+
+// generateDownloadURL generates the download URL and returns the file size.
+func (h *DigitalMediaHandler) generateDownloadURL(ctx context.Context, item *models.Item, config handler.Config) (string, int64, error) {
+	storage := determineStorageType(config)
 
 	if storage == "s3" {
-		// For S3, generate a presigned URL
-		url, size, err := h.generateS3URLWithSize(ctx, item, config)
-		if err != nil {
-			return nil, err
-		}
-		downloadURL = url
-		fileSize = size
-	} else {
-		// For local storage, return a direct download link
-		filePath := config.GetString("file_path")
-		if filePath == "" {
-			return nil, fmt.Errorf("file_path not configured")
-		}
-		downloadURL = fmt.Sprintf("/api/download/%s", item.ID)
-		// Would get actual file size from filesystem in real impl
-		fileSize = 0
+		return h.generateS3URLWithSize(ctx, item, config)
 	}
 
-	// Calculate expiration time
+	return h.generateLocalDownloadURL(item, config)
+}
+
+// determineStorageType returns the storage type from config or defaults to "local".
+func determineStorageType(config handler.Config) string {
+	storage := config.GetString("storage")
+	if storage == "" {
+		return "local"
+	}
+	return storage
+}
+
+// generateLocalDownloadURL generates the download URL for local storage.
+func (h *DigitalMediaHandler) generateLocalDownloadURL(item *models.Item, config handler.Config) (string, int64, error) {
+	filePath := config.GetString("file_path")
+	if filePath == "" {
+		return "", 0, fmt.Errorf("file_path not configured")
+	}
+	downloadURL := fmt.Sprintf("/api/download/%s", item.ID)
+	return downloadURL, 0, nil
+}
+
+// buildFulfillmentResult constructs the fulfillment result map.
+func buildFulfillmentResult(downloadURL string, fileSize int64, config handler.Config) map[string]interface{} {
 	expirationHours := config.GetInt("expiration_hours")
 	if expirationHours == 0 {
-		expirationHours = 24 // Default to 24 hours
+		expirationHours = 24
 	}
 	expiresAt := time.Now().Add(time.Duration(expirationHours) * time.Hour)
 
-	result := map[string]interface{}{
+	return map[string]interface{}{
 		"download_url":  downloadURL,
 		"expires_at":    expiresAt.Format(time.RFC3339),
 		"file_size_mb":  fileSize / (1024 * 1024),
 		"max_downloads": config.GetInt("max_downloads"),
 	}
-
-	return result, nil
 }
 
 // Validate checks if the digital media configuration is valid.
 func (h *DigitalMediaHandler) Validate(config models.JSONMap) error {
 	c := handler.Config{Settings: config}
+	storage := determineStorageType(c)
 
-	storage := c.GetString("storage")
-	if storage == "" {
-		storage = "local"
+	if err := validateStorageConfig(c, storage); err != nil {
+		return err
 	}
 
+	return validateExpirationHours(c)
+}
+
+// validateStorageConfig validates the configuration for the specified storage type.
+func validateStorageConfig(c handler.Config, storage string) error {
 	switch storage {
 	case "s3":
-		// Validate S3 configuration
-		bucket := c.GetString("s3_bucket")
-		if bucket == "" {
-			return fmt.Errorf("s3_bucket is required for S3 storage")
-		}
-		region := c.GetString("s3_region")
-		if region == "" {
-			return fmt.Errorf("s3_region is required for S3 storage")
-		}
+		return validateS3Config(c)
 	case "local":
-		// Validate local storage
-		filePath := c.GetString("file_path")
-		if filePath == "" {
-			return fmt.Errorf("file_path is required for local storage")
-		}
+		return validateLocalConfig(c)
 	default:
 		return fmt.Errorf("unsupported storage type: %s (must be 's3' or 'local')", storage)
 	}
+}
 
-	// Validate expiration if specified
+// validateS3Config checks S3 configuration fields.
+func validateS3Config(c handler.Config) error {
+	bucket := c.GetString("s3_bucket")
+	if bucket == "" {
+		return fmt.Errorf("s3_bucket is required for S3 storage")
+	}
+	region := c.GetString("s3_region")
+	if region == "" {
+		return fmt.Errorf("s3_region is required for S3 storage")
+	}
+	return nil
+}
+
+// validateLocalConfig checks local storage configuration fields.
+func validateLocalConfig(c handler.Config) error {
+	filePath := c.GetString("file_path")
+	if filePath == "" {
+		return fmt.Errorf("file_path is required for local storage")
+	}
+	return nil
+}
+
+// validateExpirationHours checks if expiration_hours is at least 1.
+func validateExpirationHours(c handler.Config) error {
 	expiration := c.GetInt("expiration_hours")
 	if expiration < 1 {
 		return fmt.Errorf("expiration_hours must be at least 1")
 	}
-
 	return nil
 }
 
