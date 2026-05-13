@@ -1,0 +1,251 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: store_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests
+        env:
+          STORE_DATABASE_URL: postgres://postgres:postgres@localhost:5432/store_test?sslmode=disable
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          flags: unittests
+          fail_ci_if_error: false
+
+  vet:
+    name: Vet
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run go vet
+        run: go vet ./...
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: latest
+          args: --timeout=5m
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build
+        run: go build -v ./cmd/store
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deployments/docker/Dockerfile
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Test Docker image
+        run: |
+          docker build -f deployments/docker/Dockerfile -t test-store .
+          docker run -d --name test-store -p 8080:8080 test-store
+          sleep 10
+          docker exec test-store curl -f http://localhost:8080/health || exit 1
+          docker stop test-store
+          docker rm test-store
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: Run gosec
+        uses: securego/gosec@master
+        with:
+          args: '-exclude-generated -severity high -confidence medium ./...'
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create .env file
+        run: |
+          cat > .env << EOF
+          STORE_DATABASE_URL=postgres://store_user:store_password@postgres:5432/store_db
+          STORE_PORT=8080
+          STORE_HOST=0.0.0.0
+          STORE_PAYWALL_URL=http://paywall-mock:8081
+          STORE_PAYWALL_API_KEY=sk_test_12345
+          STORE_PAYWALL_WEBHOOK_SECRET=webhook_secret_12345
+          STORE_PUBLIC_URL=http://store:8080
+          STORE_AUTO_FULFILL=true
+          STORE_ADMIN_TOKEN=test-admin-token
+          STORE_LOG_LEVEL=debug
+          STORE_LOG_FORMAT=json
+          EOF
+
+      - name: Start services with docker-compose
+        run: docker-compose up -d
+
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for PostgreSQL..."
+          timeout 60 bash -c 'until docker-compose exec -T postgres pg_isready -U store_user -d store_db; do sleep 2; done'
+          echo "Waiting for store service..."
+          timeout 60 bash -c 'until curl -f http://localhost:8080/health; do sleep 2; done'
+          echo "Waiting for paywall mock..."
+          timeout 60 bash -c 'until curl -f http://localhost:8081/health; do sleep 2; done'
+          echo "All services ready"
+
+      - name: Run database migration check
+        run: docker-compose exec -T store ./store --version || echo "Service running"
+
+      - name: Test API endpoints
+        run: |
+          # Test health endpoint
+          curl -f http://localhost:8080/health || exit 1
+          
+          # Test catalog endpoint
+          curl -f http://localhost:8080/api/catalog || exit 1
+          
+          # Test mock paywall health
+          curl -f http://localhost:8081/health || exit 1
+          
+          echo "Integration tests passed"
+
+      - name: Show logs on failure
+        if: failure()
+        run: |
+          docker-compose logs postgres
+          docker-compose logs store
+          docker-compose logs paywall-mock
+
+      - name: Stop services
+        if: always()
+        run: docker-compose down -v

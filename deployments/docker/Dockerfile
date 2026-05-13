@@ -19,9 +19,9 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o store ./cmd/store
 
 # Runtime stage
-FROM alpine:3.18
+FROM alpine:3.19
 
-RUN apk add --no-cache ca-certificates curl
+RUN apk update && apk add --no-cache ca-certificates curl
 
 WORKDIR /app
 
