@@ -14,6 +14,7 @@ import (
 
 	"github.com/opd-ai/store/pkg/models"
 	"github.com/opd-ai/store/pkg/paywall"
+	"github.com/opd-ai/store/pkg/pod"
 	"github.com/opd-ai/store/pkg/store"
 )
 
@@ -352,6 +353,81 @@ func (h *Handler) FulfillPayment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sendJSON(w, http.StatusOK, map[string]string{"status": "fulfilled"})
+}
+
+// GetOrderStatus retrieves the current status of a PoD order.
+func (h *Handler) GetOrderStatus(w http.ResponseWriter, r *http.Request) {
+	if err := requireAdminToken(r); err != nil {
+		sendError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	vars := mux.Vars(r)
+	paymentID := vars["payment_id"]
+
+	// Get payment
+	payment, err := h.store.GetPayment(r.Context(), paymentID)
+	if err != nil {
+		sendError(w, http.StatusNotFound, "Payment not found")
+		return
+	}
+
+	// Check if payment has fulfillment result
+	if payment.FulfillmentResult == nil || len(payment.FulfillmentResult) == 0 {
+		sendError(w, http.StatusNotFound, "No fulfillment result for this payment")
+		return
+	}
+
+	// Extract provider and order ID from fulfillment result
+	providerName, _ := payment.FulfillmentResult["provider"].(string)
+	orderID, _ := payment.FulfillmentResult["order_id"].(string)
+
+	if providerName == "" || orderID == "" {
+		sendError(w, http.StatusBadRequest, "Invalid fulfillment result: missing provider or order_id")
+		return
+	}
+
+	// Get item to extract API key
+	item, err := h.store.GetItem(r.Context(), payment.ItemID)
+	if err != nil {
+		sendError(w, http.StatusNotFound, "Item not found")
+		return
+	}
+
+	apiKey, ok := item.BackendConfig["api_key"].(string)
+	if !ok || apiKey == "" {
+		sendError(w, http.StatusBadRequest, "Missing API key in item configuration")
+		return
+	}
+
+	// Create provider instance
+	provider, err := pod.NewProvider(providerName, apiKey)
+	if err != nil {
+		sendError(w, http.StatusBadRequest, fmt.Sprintf("Failed to create provider: %v", err))
+		return
+	}
+
+	// Get order status from provider
+	status, err := provider.GetStatus(r.Context(), orderID)
+	if err != nil {
+		sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to get order status: %v", err))
+		return
+	}
+
+	// Update fulfillment result with latest status
+	updatedResult := payment.FulfillmentResult
+	updatedResult["status"] = status.Status
+	updatedResult["tracking_url"] = status.TrackingURL
+	updatedResult["shipping_date"] = status.ShippingDate
+	updatedResult["last_updated"] = status.LastUpdated
+
+	// Save updated fulfillment result
+	if err := h.store.UpdateFulfillmentResult(r.Context(), paymentID, updatedResult); err != nil {
+		log.Printf("Failed to update fulfillment result: %v", err)
+		// Continue anyway to return the status
+	}
+
+	sendJSON(w, http.StatusOK, updatedResult)
 }
 
 // CreateCategory creates a new category.

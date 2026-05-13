@@ -6,6 +6,7 @@ import (
 
 	"github.com/opd-ai/store/pkg/handler"
 	"github.com/opd-ai/store/pkg/models"
+	"github.com/opd-ai/store/pkg/pod"
 )
 
 // PrintOnDemandHandler delegates to external print-on-demand services.
@@ -30,28 +31,136 @@ func (h *PrintOnDemandHandler) Handle(ctx context.Context, payment *models.Payme
 		return nil, fmt.Errorf("missing backend configuration")
 	}
 
-	provider, ok := backendConfig["provider"].(string)
+	providerName, ok := backendConfig["provider"].(string)
 	if !ok {
 		return nil, fmt.Errorf("missing or invalid provider in configuration")
 	}
 
-	// In a real implementation:
-	// 1. Extract API endpoint and credentials from config
-	// 2. Build order payload with product ID, variant, customer address
-	// 3. Call respective provider API (Printful, Redbubble, etc.)
-	// 4. Persist order ID and tracking URL
-	// 5. Set up webhook listener for fulfillment status updates
+	// Extract API key
+	apiKey, ok := backendConfig["api_key"].(string)
+	if !ok || apiKey == "" {
+		return nil, fmt.Errorf("missing or invalid api_key in configuration")
+	}
 
-	// For this example, simulate a Printful API call
-	orderID := fmt.Sprintf("POD-%s", payment.ID[:8])
-	trackingURL := fmt.Sprintf("https://%s.example.com/track/%s", provider, orderID)
+	// Create provider instance
+	provider, err := pod.NewProvider(providerName, apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create provider: %w", err)
+	}
+
+	// Extract product mapping
+	productMapping, ok := backendConfig["product_mapping"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid product_mapping in configuration")
+	}
+
+	// Get the variant ID for this item
+	itemMapping, ok := productMapping[item.ID].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("no product mapping found for item %s", item.ID)
+	}
+
+	variantID, _ := itemMapping["variant_id"].(string)
+	if variantID == "" {
+		// Try as float64 (JSON number)
+		if variantFloat, ok := itemMapping["variant_id"].(float64); ok {
+			variantID = fmt.Sprintf("%.0f", variantFloat)
+		} else {
+			return nil, fmt.Errorf("missing or invalid variant_id in product mapping")
+		}
+	}
+
+	// Extract recipient information from payer info
+	recipientInfo, err := extractRecipientFromPayerInfo(payment.PayerInfo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract recipient info: %w", err)
+	}
+
+	// Build order request
+	orderReq := &pod.OrderRequest{
+		RecipientName:    recipientInfo.Name,
+		RecipientAddress: recipientInfo.Address,
+		RecipientCity:    recipientInfo.City,
+		RecipientState:   recipientInfo.State,
+		RecipientZip:     recipientInfo.Zip,
+		RecipientCountry: recipientInfo.Country,
+		RecipientEmail:   recipientInfo.Email,
+		RecipientPhone:   recipientInfo.Phone,
+		VariantID:        variantID,
+		Quantity:         1,
+	}
+
+	// Extract design URL if provided
+	if designURL, ok := itemMapping["design_url"].(string); ok {
+		orderReq.DesignURL = designURL
+	}
+
+	// Create order with provider
+	orderResp, err := provider.CreateOrder(ctx, orderReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create order with %s: %w", provider.Name(), err)
+	}
 
 	return map[string]interface{}{
-		"provider":            provider,
-		"order_id":            orderID,
-		"tracking_url":        trackingURL,
-		"status":              "processing",
-		"estimated_ship_date": "2026-05-20",
+		"provider":      provider.Name(),
+		"order_id":      orderResp.OrderID,
+		"external_id":   orderResp.ExternalID,
+		"status":        orderResp.Status,
+		"tracking_url":  orderResp.TrackingURL,
+		"shipping_date": orderResp.ShippingDate,
+		"created_at":    orderResp.CreatedAt,
+	}, nil
+}
+
+// recipientInfo holds structured recipient data.
+type recipientInfo struct {
+	Name    string
+	Address string
+	City    string
+	State   string
+	Zip     string
+	Country string
+	Email   string
+	Phone   string
+}
+
+// extractRecipientFromPayerInfo extracts shipping recipient information from payment payer info.
+func extractRecipientFromPayerInfo(payerInfo models.JSONMap) (*recipientInfo, error) {
+	if payerInfo == nil {
+		return nil, fmt.Errorf("payer info is nil")
+	}
+
+	// Try to extract standard fields
+	name, _ := payerInfo["name"].(string)
+	address1, _ := payerInfo["address1"].(string)
+	address2, _ := payerInfo["address2"].(string)
+	city, _ := payerInfo["city"].(string)
+	stateCode, _ := payerInfo["state_code"].(string)
+	countryCode, _ := payerInfo["country_code"].(string)
+	zip, _ := payerInfo["zip"].(string)
+	email, _ := payerInfo["email"].(string)
+	phone, _ := payerInfo["phone"].(string)
+
+	// Validate required fields
+	if name == "" || address1 == "" || city == "" || countryCode == "" || zip == "" {
+		return nil, fmt.Errorf("missing required shipping information (name, address1, city, country_code, zip)")
+	}
+
+	// Combine address lines if address2 exists
+	fullAddress := address1
+	if address2 != "" {
+		fullAddress = address1 + ", " + address2
+	}
+
+	return &recipientInfo{
+		Name:    name,
+		Address: fullAddress,
+		City:    city,
+		State:   stateCode,
+		Zip:     zip,
+		Country: countryCode,
+		Email:   email,
+		Phone:   phone,
 	}, nil
 }
 

@@ -245,7 +245,7 @@ func TestPrintOnDemandHandler(t *testing.T) {
 
 	// Test validation with valid config
 	validConfig := models.JSONMap{
-		"provider":        "printful",
+		"provider":        "redbubble",
 		"api_key":         "sk_test_123",
 		"product_mapping": map[string]interface{}{},
 	}
@@ -263,15 +263,34 @@ func TestPrintOnDemandHandler(t *testing.T) {
 		t.Error("expected validation error for invalid provider")
 	}
 
-	// Test fulfillment
+	// Test fulfillment with non-Printful provider (uses stub response)
 	ctx := context.Background()
 	payment := &models.Payment{
 		ID:     models.NewID(),
 		Status: "confirmed",
+		PayerInfo: models.JSONMap{
+			"name":         "John Doe",
+			"address1":     "123 Main St",
+			"city":         "New York",
+			"state_code":   "NY",
+			"country_code": "US",
+			"zip":          "10001",
+			"email":        "john@example.com",
+		},
 	}
 	item := &models.Item{
-		ID:            models.NewID(),
-		BackendConfig: validConfig,
+		ID: models.NewID(),
+	}
+
+	// Add product mapping for this specific item
+	item.BackendConfig = models.JSONMap{
+		"provider": "redbubble",
+		"api_key":  "sk_test_123",
+		"product_mapping": map[string]interface{}{
+			item.ID: map[string]interface{}{
+				"variant_id": "12345",
+			},
+		},
 	}
 
 	result, err := h.Handle(ctx, payment, item)
