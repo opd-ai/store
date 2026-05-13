@@ -41,28 +41,28 @@ func setupIntegrationTest(t *testing.T) (*api.Handler, *gorm.DB, *store.Store, *
 		t.Fatalf("Failed to run migrations: %v", err)
 	}
 
-	// Create store
-	s := store.New(db)
-
-	// Create mock paywall client (for integration tests, we still mock external services)
-	paywallClient := &paywall.Client{
-		APIKey: "test-key",
-	}
-
-	// Create handler with registry containing mock handler
+	// Create handler registry with mock handler
 	reg := handler.NewRegistry()
 	mockHandler := &testIntegrationHandler{
 		handlerType: "mock",
 	}
-	reg.Register(mockHandler)
+	if err := reg.Register(mockHandler); err != nil {
+		t.Fatalf("Failed to register handler: %v", err)
+	}
 
-	h := api.NewHandler(s, paywallClient, reg)
+	// Create store
+	s := store.NewStore(db, reg)
+
+	// Create mock paywall client (for integration tests, we still mock external services)
+	paywallClient := paywall.NewClient("http://test-paywall", "test-api-key")
+
+	h := api.NewHandler(s, paywallClient)
 
 	// Create router and register routes
 	r := mux.NewRouter()
 
 	// Public routes
-	r.HandleFunc("/health", h.HealthHandler).Methods("GET")
+	r.HandleFunc("/health", api.HealthHandler).Methods("GET")
 	r.HandleFunc("/api/catalog", h.GetCatalog).Methods("GET")
 	r.HandleFunc("/api/item/{id}", h.GetItem).Methods("GET")
 	r.HandleFunc("/api/checkout", h.CreateCheckout).Methods("POST")
@@ -82,6 +82,26 @@ func setupIntegrationTest(t *testing.T) (*api.Handler, *gorm.DB, *store.Store, *
 	return h, db, s, r
 }
 
+// For methods not directly available in store, use GORM db.Create()
+func createCategory(db *gorm.DB, name, description string) *models.Category {
+	cat := models.NewCategory(name, description)
+	db.Create(cat)
+	return cat
+}
+
+func createItem(db *gorm.DB, categoryID, name, description, price, currency, backendType string, config models.JSONMap) *models.Item {
+	item := models.NewItem(categoryID, name, description, price, currency, backendType)
+	item.BackendConfig = config
+	db.Create(item)
+	return item
+}
+
+func createPayment(db *gorm.DB, itemID, amount, currency string) *models.Payment {
+	payment := models.NewPayment(itemID, amount, currency)
+	db.Create(payment)
+	return payment
+}
+
 // testIntegrationHandler implements a mock fulfillment handler for integration tests
 type testIntegrationHandler struct {
 	handlerType string
@@ -90,15 +110,12 @@ type testIntegrationHandler struct {
 func (th *testIntegrationHandler) Metadata() handler.HandlerMetadata {
 	return handler.HandlerMetadata{
 		Type:        th.handlerType,
-		Name:        "Mock Handler",
+		DisplayName: "Mock Handler",
 		Description: "Test handler for integration tests",
-		ConfigSchema: map[string]interface{}{
-			"test_field": "string",
-		},
 	}
 }
 
-func (th *testIntegrationHandler) Validate(config map[string]interface{}) error {
+func (th *testIntegrationHandler) Validate(config models.JSONMap) error {
 	return nil
 }
 
@@ -127,18 +144,12 @@ func TestPaymentFlow_EndToEnd(t *testing.T) {
 	ctx := context.Background()
 
 	// Step 1: Create a category
-	category, err := s.CreateCategory(ctx, "Electronics", "electronics", "Electronic items", 1, nil)
-	if err != nil {
-		t.Fatalf("Failed to create category: %v", err)
-	}
+	category := createCategory(db, "Electronics", "Electronic items")
 
 	// Step 2: Create an item
-	item, err := s.CreateItem(ctx, category.ID, "Laptop", "High-end laptop", "1000.00", "BTC", "mock", map[string]interface{}{
+	item := createItem(db, category.ID, "Laptop", "High-end laptop", "1000.00", "BTC", "mock", models.JSONMap{
 		"test_field": "value",
-	}, nil)
-	if err != nil {
-		t.Fatalf("Failed to create item: %v", err)
-	}
+	})
 
 	// Step 3: Verify catalog listing
 	catalogReq := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
@@ -167,10 +178,7 @@ func TestPaymentFlow_EndToEnd(t *testing.T) {
 	}
 
 	// Step 5: Create payment (simulate checkout)
-	payment, err := s.CreatePayment(ctx, item.ID, "1000.00", "BTC", nil)
-	if err != nil {
-		t.Fatalf("Failed to create payment: %v", err)
-	}
+	payment := createPayment(db, item.ID, "1000.00", "BTC")
 
 	if payment.Status != "pending" {
 		t.Errorf("Expected payment status pending, got %s", payment.Status)
@@ -206,6 +214,7 @@ func TestPaymentFlow_EndToEnd(t *testing.T) {
 	}
 
 	// Step 8: Verify payment is confirmed
+	var err error
 	payment, err = s.GetPayment(ctx, payment.ID)
 	if err != nil {
 		t.Fatalf("Failed to retrieve payment: %v", err)
@@ -275,11 +284,11 @@ func TestPaymentFlow_WithFormSubmission(t *testing.T) {
 	ctx := context.Background()
 
 	// Create category and item
-	category, _ := s.CreateCategory(ctx, "Physical", "physical", "Physical items", 1, nil)
-	item, _ := s.CreateItem(ctx, category.ID, "T-Shirt", "Custom t-shirt", "25.00", "BTC", "mock", map[string]interface{}{}, nil)
+	category := createCategory(db, "Physical", "Physical items")
+	item := createItem(db, category.ID, "T-Shirt", "Custom t-shirt", "25.00", "BTC", "mock", models.JSONMap{})
 
 	// Create payment
-	payment, _ := s.CreatePayment(ctx, item.ID, "25.00", "BTC", nil)
+	payment := createPayment(db, item.ID, "25.00", "BTC")
 
 	// Confirm payment
 	err := s.ConfirmPayment(ctx, payment.ID, "payment_hash_456")
@@ -321,7 +330,10 @@ func TestPaymentFlow_WithFormSubmission(t *testing.T) {
 	}
 
 	// Verify final state
-	payment, _ = s.GetPayment(ctx, payment.ID)
+	payment, err = s.GetPayment(ctx, payment.ID)
+	if err != nil {
+		t.Fatalf("Failed to get payment: %v", err)
+	}
 	if payment.Status != "fulfilled" {
 		t.Errorf("Expected fulfilled status, got %s", payment.Status)
 	}
@@ -335,14 +347,14 @@ func TestPaymentFlow_DigitalDownload(t *testing.T) {
 	ctx := context.Background()
 
 	// Create digital item with download limit
-	category, _ := s.CreateCategory(ctx, "Digital", "digital", "Digital items", 1, nil)
-	item, _ := s.CreateItem(ctx, category.ID, "E-Book", "Digital book", "10.00", "BTC", "mock", map[string]interface{}{
+	category := createCategory(db, "Digital", "Digital items")
+	item := createItem(db, category.ID, "E-Book", "Digital book", "10.00", "BTC", "mock", models.JSONMap{
 		"max_downloads": float64(3),
 		"download_url":  "https://example.com/download/ebook.pdf",
-	}, nil)
+	})
 
 	// Create and confirm payment
-	payment, _ := s.CreatePayment(ctx, item.ID, "10.00", "BTC", nil)
+	payment := createPayment(db, item.ID, "10.00", "BTC")
 	s.ConfirmPayment(ctx, payment.ID, "hash_789")
 
 	// Fulfill payment
@@ -383,15 +395,15 @@ func TestPaymentFlow_DigitalDownload(t *testing.T) {
 
 // TestPaymentFlow_ExpiredDownload tests download expiration
 func TestPaymentFlow_ExpiredDownload(t *testing.T) {
-	_, _, s, r := setupIntegrationTest(t)
+	_, db, s, r := setupIntegrationTest(t)
 	ctx := context.Background()
 
 	// Create digital item
-	category, _ := s.CreateCategory(ctx, "Digital", "digital", "Digital items", 1, nil)
-	item, _ := s.CreateItem(ctx, category.ID, "E-Book", "Digital book", "10.00", "BTC", "mock", map[string]interface{}{}, nil)
+	category := createCategory(db, "Digital", "Digital items")
+	item := createItem(db, category.ID, "E-Book", "Digital book", "10.00", "BTC", "mock", models.JSONMap{})
 
 	// Create and confirm payment
-	payment, _ := s.CreatePayment(ctx, item.ID, "10.00", "BTC", nil)
+	payment := createPayment(db, item.ID, "10.00", "BTC")
 	s.ConfirmPayment(ctx, payment.ID, "hash_exp")
 	s.FulfillPayment(ctx, payment.ID)
 
@@ -417,15 +429,15 @@ func TestPaymentFlow_ListPayments(t *testing.T) {
 	os.Setenv("STORE_ADMIN_TOKEN", "test-admin-token")
 	defer os.Unsetenv("STORE_ADMIN_TOKEN")
 
-	_, _, s, r := setupIntegrationTest(t)
+	_, db, s, r := setupIntegrationTest(t)
 	ctx := context.Background()
 
 	// Create multiple payments
-	category, _ := s.CreateCategory(ctx, "Test", "test", "Test", 1, nil)
-	item, _ := s.CreateItem(ctx, category.ID, "Item", "Test item", "10.00", "BTC", "mock", map[string]interface{}{}, nil)
+	category := createCategory(db, "Test", "Test")
+	item := createItem(db, category.ID, "Item", "Test item", "10.00", "BTC", "mock", models.JSONMap{})
 
 	for i := 0; i < 5; i++ {
-		payment, _ := s.CreatePayment(ctx, item.ID, "10.00", "BTC", nil)
+		payment := createPayment(db, item.ID, "10.00", "BTC")
 		if i%2 == 0 {
 			s.ConfirmPayment(ctx, payment.ID, "hash_"+string(rune(i)))
 		}
