@@ -91,7 +91,18 @@ STORE_LOG_FORMAT=json
 curl -X POST http://localhost:8080/admin/categories \
   -H "Content-Type: application/json" \
   -H "X-Admin-Token: your-secret-token" \
-  -d '{"name": "Digital Products", "description": "E-books"}'
+  -d '{"name": "Digital Products", "description": "E-books and digital downloads"}'
+```
+
+**Response:**
+```json
+{
+  "id": "cat_abc123",
+  "name": "Digital Products",
+  "description": "E-books and digital downloads",
+  "order": 0,
+  "created_at": "2026-05-13T16:00:00Z"
+}
 ```
 
 ### Create Item
@@ -100,17 +111,38 @@ curl -X POST http://localhost:8080/admin/items \
   -H "Content-Type: application/json" \
   -H "X-Admin-Token: your-secret-token" \
   -d '{
-    "name": "My Product",
-    "description": "Product description",
-    "price": "100000",
+    "name": "E-Book: Go Programming",
+    "description": "Comprehensive guide to Go",
+    "price": "0.001",
     "currency": "BTC",
+    "category_id": "cat_abc123",
     "backend_type": "digital_media",
     "backend_config": {
-      "file_path": "./downloads/product.pdf",
       "storage": "local",
+      "file_path": "./downloads/go-programming.pdf",
       "expiration_hours": 24
     }
   }'
+```
+
+**Response:**
+```json
+{
+  "id": "item_xyz789",
+  "name": "E-Book: Go Programming",
+  "description": "Comprehensive guide to Go",
+  "price": "0.001",
+  "currency": "BTC",
+  "category_id": "cat_abc123",
+  "backend_type": "digital_media",
+  "backend_config": {
+    "storage": "local",
+    "file_path": "./downloads/go-programming.pdf",
+    "expiration_hours": 24
+  },
+  "active": true,
+  "created_at": "2026-05-13T16:05:00Z"
+}
 ```
 
 ### View Catalog
@@ -118,16 +150,78 @@ curl -X POST http://localhost:8080/admin/items \
 curl http://localhost:8080/api/catalog
 ```
 
+**Response:**
+```json
+{
+  "categories": [
+    {
+      "id": "cat_abc123",
+      "name": "Digital Products",
+      "description": "E-books and digital downloads"
+    }
+  ],
+  "items": [
+    {
+      "id": "item_xyz789",
+      "name": "E-Book: Go Programming",
+      "price": "0.001",
+      "currency": "BTC",
+      "category_id": "cat_abc123",
+      "backend_type": "digital_media"
+    }
+  ]
+}
+```
+
 ### Initiate Checkout
 ```bash
 curl -X POST http://localhost:8080/api/checkout \
   -H "Content-Type: application/json" \
-  -d '{"item_id": "item-123", "email": "user@example.com"}'
+  -d '{"item_id": "item_xyz789", "email": "buyer@example.com"}'
+```
+
+**Response:**
+```json
+{
+  "payment_id": "pay_def456",
+  "invoice_id": "inv_ghi789",
+  "status": "pending",
+  "amount": "0.001",
+  "currency": "BTC",
+  "payment_address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+  "qr_code": "data:image/png;base64,...",
+  "expires_at": "2026-05-13T16:35:00Z"
+}
 ```
 
 ### Check Payment Status
 ```bash
-curl http://localhost:8080/api/payment/{payment_id}/status
+curl http://localhost:8080/api/payment/pay_def456/status
+```
+
+**Response:**
+```json
+{
+  "status": "pending",
+  "amount": "0.001",
+  "currency": "BTC",
+  "created_at": "2026-05-13T16:05:00Z",
+  "payment_address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"
+}
+```
+
+After payment is confirmed, status becomes `"confirmed"`, and after fulfillment:
+```json
+{
+  "status": "fulfilled",
+  "amount": "0.001",
+  "currency": "BTC",
+  "fulfillment_result": {
+    "download_url": "http://localhost:8080/download/abc123token",
+    "expires_at": "2026-05-14T16:05:00Z"
+  },
+  "fulfilled_at": "2026-05-13T16:10:00Z"
+}
 ```
 
 ## Fulfillment Handlers

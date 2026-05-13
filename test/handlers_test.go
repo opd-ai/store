@@ -376,8 +376,7 @@ func TestDigitalMediaHandler_Validate_TableDriven(t *testing.T) {
 				"file_path":        "/path/to/file.pdf",
 				"expiration_hours": 24,
 			},
-			wantError: true,
-			errorMsg:  "storage",
+			wantError: false, // Storage defaults to "local"
 		},
 		{
 			name: "invalid storage type",
@@ -488,9 +487,9 @@ func TestShippingFormHandler_Validate_TableDriven(t *testing.T) {
 			wantError: false,
 		},
 		{
-			name:      "empty config (uses defaults)",
+			name:      "empty config (requires form_fields)",
 			config:    models.JSONMap{},
-			wantError: false,
+			wantError: true,
 		},
 		{
 			name: "config with additional metadata",
@@ -511,7 +510,7 @@ func TestShippingFormHandler_Validate_TableDriven(t *testing.T) {
 			config: models.JSONMap{
 				"form_fields": nil,
 			},
-			wantError: false, // Should use defaults
+			wantError: false, // Field exists but is nil - accepted
 		},
 	}
 
