@@ -55,6 +55,7 @@ type Payment struct {
 	ID                string     `json:"id" gorm:"primaryKey"`
 	ItemID            string     `json:"item_id" gorm:"index"`
 	Item              *Item      `json:"-" gorm:"foreignKey:ItemID"`
+	InvoiceID         string     `json:"invoice_id" gorm:"index"`
 	PaymentHash       string     `json:"payment_hash" gorm:"uniqueIndex"`
 	Status            string     `json:"status" gorm:"index"` // pending, confirmed, failed, fulfilled
 	PayerInfo         JSONMap    `json:"payer_info" gorm:"type:jsonb"`

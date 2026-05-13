@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,17 +13,22 @@ import (
 	"github.com/gorilla/mux"
 
 	"github.com/opd-ai/store/pkg/models"
+	"github.com/opd-ai/store/pkg/paywall"
 	"github.com/opd-ai/store/pkg/store"
 )
 
 // Handler encapsulates HTTP handlers for the store API.
 type Handler struct {
-	store *store.Store
+	store         *store.Store
+	paywallClient *paywall.Client
 }
 
 // NewHandler creates a new API handler.
-func NewHandler(s *store.Store) *Handler {
-	return &Handler{store: s}
+func NewHandler(s *store.Store, paywallClient *paywall.Client) *Handler {
+	return &Handler{
+		store:         s,
+		paywallClient: paywallClient,
+	}
 }
 
 // JSON response wrapper
@@ -129,11 +135,31 @@ func (h *Handler) CreateCheckout(w http.ResponseWriter, r *http.Request) {
 	}
 	payment.PayerInfo["email"] = req.Email
 
+	// Create invoice with paywall service
+	callbackURL := fmt.Sprintf("%s/webhook/payment-confirmed", os.Getenv("STORE_PUBLIC_URL"))
+	invoice, err := h.paywallClient.CreateInvoice(r.Context(), payment.Amount, payment.Currency, callbackURL)
+	if err != nil {
+		log.Printf("Failed to create invoice: %v", err)
+		sendError(w, http.StatusInternalServerError, "Failed to create payment invoice")
+		return
+	}
+
+	// Update payment with invoice ID
+	if err := h.store.UpdatePaymentInvoice(r.Context(), payment.ID, invoice.InvoiceID); err != nil {
+		log.Printf("Failed to update payment invoice: %v", err)
+		sendError(w, http.StatusInternalServerError, "Failed to update payment")
+		return
+	}
+
 	sendJSON(w, http.StatusCreated, map[string]interface{}{
-		"payment_id": payment.ID,
-		"status":     payment.Status,
-		"amount":     payment.Amount,
-		"currency":   payment.Currency,
+		"payment_id":      payment.ID,
+		"invoice_id":      invoice.InvoiceID,
+		"status":          payment.Status,
+		"amount":          payment.Amount,
+		"currency":        payment.Currency,
+		"payment_address": invoice.PaymentAddress,
+		"qr_code":         invoice.QRCode,
+		"expires_at":      invoice.ExpiresAt,
 	})
 }
 
@@ -148,8 +174,12 @@ func (h *Handler) GetPaymentStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Poll remote status if payment is pending
+	remoteStatus := h.pollPaywallStatus(r.Context(), payment)
+
 	response := map[string]interface{}{
 		"id":                 payment.ID,
+		"invoice_id":         payment.InvoiceID,
 		"item_id":            payment.ItemID,
 		"status":             payment.Status,
 		"amount":             payment.Amount,
@@ -159,7 +189,65 @@ func (h *Handler) GetPaymentStatus(w http.ResponseWriter, r *http.Request) {
 		"fulfillment_result": payment.FulfillmentResult,
 	}
 
+	// Include remote status if available
+	if remoteStatus != nil {
+		response["remote_status"] = map[string]interface{}{
+			"status":    remoteStatus.Status,
+			"confirmed": remoteStatus.Confirmed,
+		}
+	}
+
 	sendJSON(w, http.StatusOK, response)
+}
+
+// pollPaywallStatus checks the paywall for payment status and updates local state if needed.
+func (h *Handler) pollPaywallStatus(ctx context.Context, payment *models.Payment) *paywall.InvoiceStatus {
+	// Only poll if payment has invoice ID and is pending
+	if payment.InvoiceID == "" || payment.Status != "pending" {
+		return nil
+	}
+
+	// Get status from paywall
+	status, err := h.paywallClient.GetInvoiceStatus(ctx, payment.InvoiceID)
+	if err != nil {
+		log.Printf("Failed to get invoice status from paywall: %v", err)
+		return nil
+	}
+
+	// If confirmed, update local payment
+	if status.Confirmed {
+		if err := h.store.ConfirmPayment(ctx, payment.ID, status.InvoiceID); err != nil {
+			log.Printf("Failed to update payment status: %v", err)
+			return status
+		}
+
+		// Reload payment to get updated status
+		updatedPayment, _ := h.store.GetPayment(ctx, payment.ID)
+		if updatedPayment != nil {
+			*payment = *updatedPayment
+		}
+
+		// Auto-fulfill if enabled
+		if h.shouldAutoFulfill() {
+			if err := h.store.FulfillPayment(ctx, payment.ID); err != nil {
+				log.Printf("Failed to auto-fulfill payment %s: %v", payment.ID, err)
+			} else {
+				// Reload payment again to get fulfillment result
+				updatedPayment, _ := h.store.GetPayment(ctx, payment.ID)
+				if updatedPayment != nil {
+					*payment = *updatedPayment
+				}
+			}
+		}
+	}
+
+	return status
+}
+
+// shouldAutoFulfill checks if auto-fulfillment is enabled.
+func (h *Handler) shouldAutoFulfill() bool {
+	autoFulfill := os.Getenv("STORE_AUTO_FULFILL")
+	return autoFulfill == "" || autoFulfill == "true"
 }
 
 // SubmitPaymentForm submits form data for a payment.
@@ -703,6 +791,82 @@ func (h *Handler) TrackDownload(w http.ResponseWriter, r *http.Request) {
 		"status":  "tracked",
 		"payment": payment,
 		"item":    item,
+	})
+}
+
+// WebhookPaymentConfirmed handles payment confirmation webhooks from the paywall service.
+func (h *Handler) WebhookPaymentConfirmed(w http.ResponseWriter, r *http.Request) {
+	// Read request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("Failed to read webhook body: %v", err)
+		sendError(w, http.StatusBadRequest, "Failed to read request body")
+		return
+	}
+	defer func() { _ = r.Body.Close() }()
+
+	// Verify webhook signature
+	signature := r.Header.Get("X-Webhook-Signature")
+	webhookSecret := os.Getenv("STORE_PAYWALL_WEBHOOK_SECRET")
+	if webhookSecret != "" && signature != "" {
+		valid, err := h.paywallClient.VerifyWebhook(signature, body, webhookSecret)
+		if err != nil {
+			log.Printf("Failed to verify webhook signature: %v", err)
+			sendError(w, http.StatusInternalServerError, "Failed to verify signature")
+			return
+		}
+		if !valid {
+			log.Printf("Invalid webhook signature")
+			sendError(w, http.StatusUnauthorized, "Invalid signature")
+			return
+		}
+	}
+
+	// Parse webhook payload
+	var payload struct {
+		InvoiceID   string `json:"invoice_id"`
+		Status      string `json:"status"`
+		PaymentHash string `json:"tx_hash"`
+		Amount      string `json:"amount"`
+		Currency    string `json:"currency"`
+	}
+
+	if err := json.Unmarshal(body, &payload); err != nil {
+		log.Printf("Failed to parse webhook payload: %v", err)
+		sendError(w, http.StatusBadRequest, "Invalid payload format")
+		return
+	}
+
+	// Get payment by invoice ID
+	payment, err := h.store.GetPaymentByInvoiceID(r.Context(), payload.InvoiceID)
+	if err != nil {
+		log.Printf("Payment not found for invoice %s: %v", payload.InvoiceID, err)
+		sendError(w, http.StatusNotFound, "Payment not found")
+		return
+	}
+
+	// Confirm payment
+	if err := h.store.ConfirmPayment(r.Context(), payment.ID, payload.PaymentHash); err != nil {
+		log.Printf("Failed to confirm payment %s: %v", payment.ID, err)
+		sendError(w, http.StatusInternalServerError, "Failed to confirm payment")
+		return
+	}
+
+	log.Printf("Payment %s confirmed via webhook (invoice: %s, hash: %s)", payment.ID, payload.InvoiceID, payload.PaymentHash)
+
+	// Auto-fulfill if enabled (default: true)
+	if h.shouldAutoFulfill() {
+		if err := h.store.FulfillPayment(r.Context(), payment.ID); err != nil {
+			log.Printf("Failed to auto-fulfill payment %s: %v", payment.ID, err)
+			// Don't return error - payment is confirmed, fulfillment can be retried
+		} else {
+			log.Printf("Payment %s auto-fulfilled", payment.ID)
+		}
+	}
+
+	sendJSON(w, http.StatusOK, map[string]string{
+		"status":     "confirmed",
+		"payment_id": payment.ID,
 	})
 }
 
