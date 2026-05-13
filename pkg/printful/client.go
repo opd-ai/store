@@ -101,24 +101,10 @@ func NewClient(apiKey string) *Client {
 // doRequest performs an HTTP request to the Printful API and decodes the response.
 // If result is nil, the response body is not decoded (useful for DELETE requests).
 func (c *Client) doRequest(ctx context.Context, method, endpoint string, body, result interface{}) error {
-	var reqBody io.Reader
-	if body != nil {
-		jsonData, err := json.Marshal(body)
-		if err != nil {
-			return fmt.Errorf("failed to marshal request: %w", err)
-		}
-		reqBody = bytes.NewReader(jsonData)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+endpoint, reqBody)
+	req, err := c.prepareRequest(ctx, method, endpoint, body)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return err
 	}
-
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -126,6 +112,35 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body, r
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	return c.processResponse(resp, result)
+}
+
+// prepareRequest creates and configures an HTTP request with body marshaling.
+func (c *Client) prepareRequest(ctx context.Context, method, endpoint string, body interface{}) (*http.Request, error) {
+	var reqBody io.Reader
+	if body != nil {
+		jsonData, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request: %w", err)
+		}
+		reqBody = bytes.NewReader(jsonData)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+endpoint, reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	return req, nil
+}
+
+// processResponse reads and validates the Printful API response.
+func (c *Client) processResponse(resp *http.Response, result interface{}) error {
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("failed to read response: %w", err)
@@ -136,12 +151,8 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body, r
 		return fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	// Check for successful status codes (200 or 201 for creates)
-	if pfResp.Code != 200 && pfResp.Code != 201 {
-		if pfResp.Error != nil {
-			return fmt.Errorf("printful API error (code %d): %s", pfResp.Error.Code, pfResp.Error.Message)
-		}
-		return fmt.Errorf("unexpected status code %d: %s", pfResp.Code, string(bodyBytes))
+	if err := c.checkResponseStatus(&pfResp, bodyBytes); err != nil {
+		return err
 	}
 
 	// Decode result if provided
@@ -152,6 +163,19 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body, r
 	}
 
 	return nil
+}
+
+// checkResponseStatus validates Printful API status codes.
+func (c *Client) checkResponseStatus(pfResp *printfulResponse, bodyBytes []byte) error {
+	if pfResp.Code == 200 || pfResp.Code == 201 {
+		return nil
+	}
+
+	if pfResp.Error != nil {
+		return fmt.Errorf("printful API error (code %d): %s", pfResp.Error.Code, pfResp.Error.Message)
+	}
+
+	return fmt.Errorf("unexpected status code %d: %s", pfResp.Code, string(bodyBytes))
 }
 
 // CreateOrder creates a new order with Printful.

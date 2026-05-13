@@ -220,34 +220,48 @@ func (h *Handler) pollPaywallStatus(ctx context.Context, payment *models.Payment
 		return nil
 	}
 
-	// If confirmed, update local payment
+	// If confirmed, update local payment and auto-fulfill if enabled
 	if status.Confirmed {
-		if err := h.store.ConfirmPayment(ctx, payment.ID, status.InvoiceID); err != nil {
-			log.Printf("Failed to update payment status: %v", err)
-			return status
-		}
-
-		// Reload payment to get updated status
-		updatedPayment, _ := h.store.GetPayment(ctx, payment.ID)
-		if updatedPayment != nil {
-			*payment = *updatedPayment
-		}
-
-		// Auto-fulfill if enabled
-		if h.shouldAutoFulfill() {
-			if err := h.store.FulfillPayment(ctx, payment.ID); err != nil {
-				log.Printf("Failed to auto-fulfill payment %s: %v", payment.ID, err)
-			} else {
-				// Reload payment again to get fulfillment result
-				updatedPayment, _ := h.store.GetPayment(ctx, payment.ID)
-				if updatedPayment != nil {
-					*payment = *updatedPayment
-				}
-			}
-		}
+		h.handleConfirmedPayment(ctx, payment)
 	}
 
 	return status
+}
+
+// handleConfirmedPayment confirms payment and optionally auto-fulfills.
+func (h *Handler) handleConfirmedPayment(ctx context.Context, payment *models.Payment) {
+	// Confirm payment
+	if err := h.store.ConfirmPayment(ctx, payment.ID, payment.InvoiceID); err != nil {
+		log.Printf("Failed to update payment status: %v", err)
+		return
+	}
+
+	// Reload payment to get updated status
+	h.reloadPayment(ctx, payment)
+
+	// Auto-fulfill if enabled
+	if h.shouldAutoFulfill() {
+		h.attemptAutoFulfill(ctx, payment)
+	}
+}
+
+// reloadPayment updates the payment pointer with the latest data.
+func (h *Handler) reloadPayment(ctx context.Context, payment *models.Payment) {
+	updatedPayment, _ := h.store.GetPayment(ctx, payment.ID)
+	if updatedPayment != nil {
+		*payment = *updatedPayment
+	}
+}
+
+// attemptAutoFulfill tries to fulfill payment and reloads on success.
+func (h *Handler) attemptAutoFulfill(ctx context.Context, payment *models.Payment) {
+	if err := h.store.FulfillPayment(ctx, payment.ID); err != nil {
+		log.Printf("Failed to auto-fulfill payment %s: %v", payment.ID, err)
+		return
+	}
+
+	// Reload payment to get fulfillment result
+	h.reloadPayment(ctx, payment)
 }
 
 // shouldAutoFulfill checks if auto-fulfillment is enabled.
@@ -465,18 +479,9 @@ func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 
 // ListCategories lists all categories.
 func (h *Handler) ListCategories(w http.ResponseWriter, r *http.Request) {
-	if err := requireAdminToken(r); err != nil {
-		sendError(w, http.StatusUnauthorized, "Unauthorized")
-		return
-	}
-
-	categories, err := h.store.ListCategories(r.Context())
-	if err != nil {
-		sendError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	sendJSON(w, http.StatusOK, categories)
+	h.handleList(w, r, func(ctx context.Context) (interface{}, error) {
+		return h.store.ListCategories(ctx)
+	})
 }
 
 // UpdateCategory updates a category.
@@ -683,18 +688,9 @@ func (h *Handler) CreateTag(w http.ResponseWriter, r *http.Request) {
 
 // ListTags lists all tags.
 func (h *Handler) ListTags(w http.ResponseWriter, r *http.Request) {
-	if err := requireAdminToken(r); err != nil {
-		sendError(w, http.StatusUnauthorized, "Unauthorized")
-		return
-	}
-
-	tags, err := h.store.ListTags(r.Context())
-	if err != nil {
-		sendError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	sendJSON(w, http.StatusOK, tags)
+	h.handleList(w, r, func(ctx context.Context) (interface{}, error) {
+		return h.store.ListTags(ctx)
+	})
 }
 
 // UpdateTag updates a tag.
@@ -785,57 +781,27 @@ func (h *Handler) TrackDownload(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	paymentID := vars["id"]
 
-	// Get payment with item
-	payment, err := h.store.GetPayment(r.Context(), paymentID)
+	// Get and validate payment and item
+	payment, item, err := h.getPaymentWithItem(r.Context(), paymentID)
 	if err != nil {
-		sendError(w, http.StatusNotFound, "Payment not found")
+		sendError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
-	// Load item to get backend_config
-	item, err := h.store.GetItem(r.Context(), payment.ItemID)
-	if err != nil {
-		sendError(w, http.StatusNotFound, "Item not found")
+	// Validate download eligibility
+	if err := h.validateDownloadEligibility(payment); err != nil {
+		sendError(w, err.(*downloadError).statusCode, err.Error())
 		return
-	}
-
-	// Check if payment is fulfilled
-	if payment.Status != "fulfilled" {
-		sendError(w, http.StatusForbidden, "Payment not fulfilled")
-		return
-	}
-
-	// Check expiration from fulfillment_result
-	if expiresAtStr, ok := payment.FulfillmentResult["expires_at"].(string); ok {
-		expiresAt, err := time.Parse(time.RFC3339, expiresAtStr)
-		if err == nil && time.Now().After(expiresAt) {
-			sendError(w, http.StatusGone, "Download link has expired")
-			return
-		}
-	}
-
-	// Get max downloads from config
-	maxDownloads := 0
-	if val, ok := item.BackendConfig["max_downloads"].(float64); ok {
-		maxDownloads = int(val)
 	}
 
 	// Check download limit
-	limitExceeded, err := h.store.CheckDownloadLimit(r.Context(), paymentID, maxDownloads)
-	if err != nil {
-		sendError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	if limitExceeded {
-		sendError(w, http.StatusTooManyRequests, "Download limit exceeded")
+	if err := h.checkDownloadLimits(r.Context(), paymentID, item.BackendConfig); err != nil {
+		sendError(w, err.(*downloadError).statusCode, err.Error())
 		return
 	}
 
 	// Record the download
-	ipAddress := r.RemoteAddr
-	userAgent := r.UserAgent()
-	if err := h.store.RecordDownload(r.Context(), paymentID, ipAddress, userAgent); err != nil {
+	if err := h.store.RecordDownload(r.Context(), paymentID, r.RemoteAddr, r.UserAgent()); err != nil {
 		sendError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -845,6 +811,67 @@ func (h *Handler) TrackDownload(w http.ResponseWriter, r *http.Request) {
 		"payment": payment,
 		"item":    item,
 	})
+}
+
+// downloadError carries HTTP status codes for download errors.
+type downloadError struct {
+	statusCode int
+	message    string
+}
+
+func (e *downloadError) Error() string {
+	return e.message
+}
+
+// getPaymentWithItem retrieves and validates payment and item.
+func (h *Handler) getPaymentWithItem(ctx context.Context, paymentID string) (*models.Payment, *models.Item, error) {
+	payment, err := h.store.GetPayment(ctx, paymentID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("Payment not found")
+	}
+
+	item, err := h.store.GetItem(ctx, payment.ItemID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("Item not found")
+	}
+
+	return payment, item, nil
+}
+
+// validateDownloadEligibility checks payment status and expiration.
+func (h *Handler) validateDownloadEligibility(payment *models.Payment) error {
+	if payment.Status != "fulfilled" {
+		return &downloadError{http.StatusForbidden, "Payment not fulfilled"}
+	}
+
+	// Check expiration from fulfillment_result
+	if expiresAtStr, ok := payment.FulfillmentResult["expires_at"].(string); ok {
+		expiresAt, err := time.Parse(time.RFC3339, expiresAtStr)
+		if err == nil && time.Now().After(expiresAt) {
+			return &downloadError{http.StatusGone, "Download link has expired"}
+		}
+	}
+
+	return nil
+}
+
+// checkDownloadLimits validates download count against configured limits.
+func (h *Handler) checkDownloadLimits(ctx context.Context, paymentID string, config models.JSONMap) error {
+	maxDownloads := 0
+	if val, ok := config["max_downloads"].(float64); ok {
+		maxDownloads = int(val)
+	}
+
+	limitExceeded, err := h.store.CheckDownloadLimit(ctx, paymentID, maxDownloads)
+	if err != nil {
+		return &downloadError{http.StatusInternalServerError, err.Error()}
+	}
+
+	if limitExceeded {
+		return &downloadError{http.StatusTooManyRequests, "Download limit exceeded"}
+	}
+
+	return nil
 }
 
 // WebhookPaymentConfirmed handles payment confirmation webhooks from the paywall service.
@@ -971,6 +998,22 @@ func (h *Handler) processPaymentConfirmation(ctx context.Context, payload *webho
 }
 
 // Helper functions
+
+// handleList is a generic handler for listing resources.
+func (h *Handler) handleList(w http.ResponseWriter, r *http.Request, listFn func(ctx context.Context) (interface{}, error)) {
+	if err := requireAdminToken(r); err != nil {
+		sendError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	results, err := listFn(r.Context())
+	if err != nil {
+		sendError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	sendJSON(w, http.StatusOK, results)
+}
 
 // handleDelete is a generic handler for delete operations.
 func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request, deleteFn func(ctx context.Context, id string) error) {

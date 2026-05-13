@@ -36,29 +36,43 @@ func (h *CustomHandler) Handle(ctx context.Context, payment *models.Payment, ite
 		return nil, handler.ErrPaymentNotConfirmed
 	}
 
-	// Extract webhook configuration
-	backendConfig := item.BackendConfig
-	if backendConfig == nil {
-		return nil, fmt.Errorf("missing backend configuration")
-	}
-
-	webhookURL, ok := backendConfig["webhook_url"].(string)
-	if !ok || webhookURL == "" {
-		return nil, fmt.Errorf("missing or invalid webhook_url in configuration")
+	// Extract and validate webhook configuration
+	webhookURL, retryCount, err := h.extractWebhookConfig(item.BackendConfig)
+	if err != nil {
+		return nil, err
 	}
 
 	// Build payload from template
-	payload := h.buildPayload(payment, item, backendConfig)
+	payload := h.buildPayload(payment, item, item.BackendConfig)
 
 	// POST to webhook URL with retries
-	retryCount := 3
-	if rc, ok := backendConfig["retry_count"].(float64); ok {
+	return h.invokeWithRetry(ctx, webhookURL, payload, item.BackendConfig, retryCount)
+}
+
+// extractWebhookConfig validates and extracts webhook configuration.
+func (h *CustomHandler) extractWebhookConfig(config map[string]interface{}) (webhookURL string, retryCount int, err error) {
+	if config == nil {
+		return "", 0, fmt.Errorf("missing backend configuration")
+	}
+
+	webhookURL, ok := config["webhook_url"].(string)
+	if !ok || webhookURL == "" {
+		return "", 0, fmt.Errorf("missing or invalid webhook_url in configuration")
+	}
+
+	retryCount = 3 // default
+	if rc, ok := config["retry_count"].(float64); ok {
 		retryCount = int(rc)
 	}
 
+	return webhookURL, retryCount, nil
+}
+
+// invokeWithRetry attempts webhook invocation with exponential backoff.
+func (h *CustomHandler) invokeWithRetry(ctx context.Context, webhookURL string, payload map[string]interface{}, config map[string]interface{}, retryCount int) (map[string]interface{}, error) {
 	var lastErr error
 	for attempt := 0; attempt <= retryCount; attempt++ {
-		result, err := h.invokeWebhook(ctx, webhookURL, payload, backendConfig)
+		result, err := h.invokeWebhook(ctx, webhookURL, payload, config)
 		if err == nil {
 			return result, nil
 		}
@@ -66,16 +80,24 @@ func (h *CustomHandler) Handle(ctx context.Context, payment *models.Payment, ite
 
 		// Don't retry on last attempt
 		if attempt < retryCount {
-			backoff := time.Duration((attempt + 1)) * time.Second
-			select {
-			case <-time.After(backoff):
-			case <-ctx.Done():
-				return nil, ctx.Err()
+			if err := h.backoffDelay(ctx, attempt); err != nil {
+				return nil, err
 			}
 		}
 	}
 
 	return nil, fmt.Errorf("webhook invocation failed after %d retries: %w", retryCount, lastErr)
+}
+
+// backoffDelay implements exponential backoff with context cancellation.
+func (h *CustomHandler) backoffDelay(ctx context.Context, attempt int) error {
+	backoff := time.Duration((attempt + 1)) * time.Second
+	select {
+	case <-time.After(backoff):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // invokeWebhook calls the webhook endpoint and processes the response.
