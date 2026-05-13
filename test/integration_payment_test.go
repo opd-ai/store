@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -474,4 +475,679 @@ func TestPaymentFlow_ListPayments(t *testing.T) {
 	}
 
 	t.Logf("Integration test passed: Admin payment listing")
+}
+
+// TestPaymentFlow_CheckoutEndpoint tests the actual /api/checkout endpoint
+func TestPaymentFlow_CheckoutEndpoint(t *testing.T) {
+	os.Setenv("STORE_ADMIN_TOKEN", "test-admin-token")
+	os.Setenv("STORE_PUBLIC_URL", "http://localhost:8080")
+	defer os.Unsetenv("STORE_ADMIN_TOKEN")
+	defer os.Unsetenv("STORE_PUBLIC_URL")
+
+	// Create mock paywall server
+	mockPaywall := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/create-payment" {
+			response := map[string]interface{}{
+				"invoice_id":      "test-invoice-123",
+				"status":          "pending",
+				"payment_address": "bc1qtest123456",
+				"qr_code":         "data:image/png;base64,test",
+				"expires_at":      time.Now().Add(30 * time.Minute).Format(time.RFC3339),
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		} else if r.URL.Path == "/invoice-status" {
+			// Return pending status for invoice status requests
+			response := map[string]interface{}{
+				"invoice_id": "test-invoice-123",
+				"status":     "pending",
+				"confirmed":  false,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		}
+	}))
+	defer mockPaywall.Close()
+
+	// Create test infrastructure with mock paywall URL
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	err = db.AutoMigrate(
+		&models.Category{},
+		&models.Item{},
+		&models.Tag{},
+		&models.Payment{},
+		&models.FormSubmission{},
+		&models.DownloadLog{},
+	)
+	if err != nil {
+		t.Fatalf("Failed to run migrations: %v", err)
+	}
+
+	reg := handler.NewRegistry()
+	mockHandler := &testIntegrationHandler{handlerType: "mock"}
+	if err := reg.Register(mockHandler); err != nil {
+		t.Fatalf("Failed to register handler: %v", err)
+	}
+
+	s := store.NewStore(db, reg)
+	paywallClient := paywall.NewClient(mockPaywall.URL, "test-api-key")
+	h := api.NewHandler(s, paywallClient)
+
+	r := mux.NewRouter()
+	r.HandleFunc("/api/catalog", h.GetCatalog).Methods("GET")
+	r.HandleFunc("/api/checkout", h.CreateCheckout).Methods("POST")
+	r.HandleFunc("/api/payment/{id}/status", h.GetPaymentStatus).Methods("GET")
+	r.HandleFunc("/admin/payments/{id}/confirm", h.ConfirmPayment).Methods("POST")
+
+	ctx := context.Background()
+
+	// Create category and item
+	category := createCategory(db, "Test Products", "Test category")
+	item := createItem(db, category.ID, "Test Product", "A test product", "50.00", "BTC", "mock", models.JSONMap{})
+
+	// POST to /api/checkout
+	checkoutReq := map[string]string{
+		"item_id": item.ID,
+		"email":   "buyer@example.com",
+	}
+	checkoutJSON, _ := json.Marshal(checkoutReq)
+	checkoutHTTPReq := httptest.NewRequest(http.MethodPost, "/api/checkout", bytes.NewReader(checkoutJSON))
+	checkoutHTTPReq.Header.Set("Content-Type", "application/json")
+	checkoutW := httptest.NewRecorder()
+	r.ServeHTTP(checkoutW, checkoutHTTPReq)
+
+	if checkoutW.Code != http.StatusOK {
+		t.Fatalf("Checkout failed: %d - %s", checkoutW.Code, checkoutW.Body.String())
+	}
+
+	var checkoutResp struct {
+		PaymentID      string `json:"payment_id"`
+		Amount         string `json:"amount"`
+		Currency       string `json:"currency"`
+		PaymentAddress string `json:"payment_address"`
+		InvoiceID      string `json:"invoice_id"`
+	}
+	json.NewDecoder(checkoutW.Body).Decode(&checkoutResp)
+
+	if checkoutResp.PaymentID == "" {
+		t.Fatal("Expected payment_id in checkout response")
+	}
+	if checkoutResp.InvoiceID == "" {
+		t.Fatal("Expected invoice_id in checkout response")
+	}
+
+	// GET /api/payment/{id}/status
+	statusReq := httptest.NewRequest(http.MethodGet, "/api/payment/"+checkoutResp.PaymentID+"/status", nil)
+	statusW := httptest.NewRecorder()
+	r.ServeHTTP(statusW, statusReq)
+
+	if statusW.Code != http.StatusOK {
+		t.Errorf("Payment status request failed: %d", statusW.Code)
+	}
+
+	var statusResp struct {
+		Status   string `json:"status"`
+		Amount   string `json:"amount"`
+		Currency string `json:"currency"`
+	}
+	json.NewDecoder(statusW.Body).Decode(&statusResp)
+
+	if statusResp.Status != "pending" {
+		t.Errorf("Expected status 'pending', got %s", statusResp.Status)
+	}
+	if statusResp.Amount != "50.00" {
+		t.Errorf("Expected amount '50.00', got %s", statusResp.Amount)
+	}
+
+	// Verify payment in database
+	payment, err := s.GetPayment(ctx, checkoutResp.PaymentID)
+	if err != nil {
+		t.Fatalf("Failed to get payment: %v", err)
+	}
+	if payment.PayerInfo["email"] != "buyer@example.com" {
+		t.Error("Expected email to be stored in payer_info")
+	}
+
+	t.Logf("Integration test passed: Checkout endpoint flow")
+}
+
+// setupTestWithHandlers creates test infrastructure with real handlers
+func setupTestWithHandlers(t *testing.T) (*api.Handler, *gorm.DB, *store.Store, *mux.Router, *httptest.Server) {
+	// Create mock paywall server
+	mockPaywall := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/create-payment" {
+			response := map[string]interface{}{
+				"invoice_id":      "test-invoice-" + time.Now().Format("20060102150405"),
+				"status":          "pending",
+				"payment_address": "bc1qtest" + time.Now().Format("20060102150405"),
+				"qr_code":         "data:image/png;base64,test",
+				"expires_at":      time.Now().Add(30 * time.Minute).Format(time.RFC3339),
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		} else if r.URL.Path == "/invoice-status" {
+			// Return pending status for invoice status requests
+			response := map[string]interface{}{
+				"invoice_id": "test-invoice",
+				"status":     "pending",
+				"confirmed":  false,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		}
+	}))
+
+	// Create in-memory database
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	// Run migrations
+	err = db.AutoMigrate(
+		&models.Category{},
+		&models.Item{},
+		&models.Tag{},
+		&models.Payment{},
+		&models.FormSubmission{},
+		&models.DownloadLog{},
+	)
+	if err != nil {
+		t.Fatalf("Failed to run migrations: %v", err)
+	}
+
+	// Create handler registry with real handlers
+	reg := handler.NewRegistry()
+	handlers := []handler.FulfillmentHandler{
+		&testDigitalMediaHandler{},
+		&testShippingFormHandler{},
+		&testPrintOnDemandHandler{},
+		&testCustomHandler{},
+	}
+	for _, h := range handlers {
+		if err := reg.Register(h); err != nil {
+			t.Fatalf("Failed to register handler: %v", err)
+		}
+	}
+
+	// Create store
+	s := store.NewStore(db, reg)
+
+	// Create mock paywall client with mock server URL
+	paywallClient := paywall.NewClient(mockPaywall.URL, "test-api-key")
+
+	h := api.NewHandler(s, paywallClient)
+
+	// Create router and register routes
+	r := mux.NewRouter()
+
+	// Public routes
+	r.HandleFunc("/health", api.HealthHandler).Methods("GET")
+	r.HandleFunc("/api/catalog", h.GetCatalog).Methods("GET")
+	r.HandleFunc("/api/item/{id}", h.GetItem).Methods("GET")
+	r.HandleFunc("/api/checkout", h.CreateCheckout).Methods("POST")
+	r.HandleFunc("/api/payment/{id}/status", h.GetPaymentStatus).Methods("GET")
+	r.HandleFunc("/api/payment/{id}/submit-form", h.SubmitPaymentForm).Methods("POST")
+	r.HandleFunc("/api/payment/{id}/track-download", h.TrackDownload).Methods("POST")
+
+	// Admin routes
+	r.HandleFunc("/admin/payments", h.ListPayments).Methods("GET")
+	r.HandleFunc("/admin/payments/{id}/confirm", h.ConfirmPayment).Methods("POST")
+	r.HandleFunc("/admin/payments/{id}/fulfill", h.FulfillPayment).Methods("POST")
+	r.HandleFunc("/admin/categories", h.CreateCategory).Methods("POST")
+	r.HandleFunc("/admin/categories", h.ListCategories).Methods("GET")
+	r.HandleFunc("/admin/items", h.CreateItem).Methods("POST")
+	r.HandleFunc("/admin/items", h.ListItems).Methods("GET")
+
+	return h, db, s, r, mockPaywall
+}
+
+// Test handler implementations that mimic real behavior
+
+type testDigitalMediaHandler struct{}
+
+func (h *testDigitalMediaHandler) Metadata() handler.HandlerMetadata {
+	return handler.HandlerMetadata{
+		Type:        "digital_media",
+		DisplayName: "Digital Media",
+		Description: "Test digital media handler",
+	}
+}
+
+func (h *testDigitalMediaHandler) Validate(config models.JSONMap) error {
+	storage, ok := config["storage"].(string)
+	if !ok || (storage != "local" && storage != "s3") {
+		return fmt.Errorf("storage must be 'local' or 's3'")
+	}
+	if _, ok := config["file_path"].(string); !ok {
+		return fmt.Errorf("file_path is required")
+	}
+	return nil
+}
+
+func (h *testDigitalMediaHandler) RequiresForm() bool {
+	return false
+}
+
+func (h *testDigitalMediaHandler) GetFormSchema() map[string]interface{} {
+	return nil
+}
+
+func (h *testDigitalMediaHandler) Handle(ctx context.Context, payment *models.Payment, item *models.Item) (map[string]interface{}, error) {
+	filePath := item.BackendConfig["file_path"].(string)
+	return map[string]interface{}{
+		"download_url": "http://example.com/download/" + filePath,
+		"expires_at":   time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+	}, nil
+}
+
+type testShippingFormHandler struct{}
+
+func (h *testShippingFormHandler) Metadata() handler.HandlerMetadata {
+	return handler.HandlerMetadata{
+		Type:        "shipping_form",
+		DisplayName: "Shipping Form",
+		Description: "Test shipping form handler",
+	}
+}
+
+func (h *testShippingFormHandler) Validate(config models.JSONMap) error {
+	return nil
+}
+
+func (h *testShippingFormHandler) RequiresForm() bool {
+	return true
+}
+
+func (h *testShippingFormHandler) GetFormSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"fields": []string{"name", "address", "city", "state", "zip", "country"},
+	}
+}
+
+func (h *testShippingFormHandler) Handle(ctx context.Context, payment *models.Payment, item *models.Item) (map[string]interface{}, error) {
+	return map[string]interface{}{
+		"status":  "awaiting_shipment",
+		"message": "Order will be shipped within 2-3 business days",
+	}, nil
+}
+
+type testPrintOnDemandHandler struct{}
+
+func (h *testPrintOnDemandHandler) Metadata() handler.HandlerMetadata {
+	return handler.HandlerMetadata{
+		Type:        "pod",
+		DisplayName: "Print on Demand",
+		Description: "Test POD handler",
+	}
+}
+
+func (h *testPrintOnDemandHandler) Validate(config models.JSONMap) error {
+	provider, ok := config["provider"].(string)
+	if !ok || (provider != "printful" && provider != "redbubble" && provider != "teespring") {
+		return fmt.Errorf("invalid provider")
+	}
+	if _, ok := config["product_id"].(string); !ok {
+		return fmt.Errorf("product_id is required")
+	}
+	return nil
+}
+
+func (h *testPrintOnDemandHandler) RequiresForm() bool {
+	return true
+}
+
+func (h *testPrintOnDemandHandler) GetFormSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"fields": []string{"name", "address", "city", "state", "zip", "country", "size"},
+	}
+}
+
+func (h *testPrintOnDemandHandler) Handle(ctx context.Context, payment *models.Payment, item *models.Item) (map[string]interface{}, error) {
+	provider := item.BackendConfig["provider"].(string)
+	return map[string]interface{}{
+		"order_id":     "TEST-ORDER-123",
+		"provider":     provider,
+		"status":       "processing",
+		"tracking_url": "http://example.com/track/123",
+	}, nil
+}
+
+type testCustomHandler struct{}
+
+func (h *testCustomHandler) Metadata() handler.HandlerMetadata {
+	return handler.HandlerMetadata{
+		Type:        "custom",
+		DisplayName: "Custom Webhook",
+		Description: "Test custom handler",
+	}
+}
+
+func (h *testCustomHandler) Validate(config models.JSONMap) error {
+	if _, ok := config["webhook_url"].(string); !ok {
+		return fmt.Errorf("webhook_url is required")
+	}
+	return nil
+}
+
+func (h *testCustomHandler) RequiresForm() bool {
+	return false
+}
+
+func (h *testCustomHandler) GetFormSchema() map[string]interface{} {
+	return nil
+}
+
+func (h *testCustomHandler) Handle(ctx context.Context, payment *models.Payment, item *models.Item) (map[string]interface{}, error) {
+	webhookURL := item.BackendConfig["webhook_url"].(string)
+	return map[string]interface{}{
+		"webhook_called": true,
+		"webhook_url":    webhookURL,
+		"response":       "success",
+	}, nil
+}
+
+// TestPaymentFlow_DigitalMediaHandlerEndToEnd tests digital media handler with checkout
+func TestPaymentFlow_DigitalMediaHandlerEndToEnd(t *testing.T) {
+	os.Setenv("STORE_ADMIN_TOKEN", "test-admin-token")
+	os.Setenv("STORE_PUBLIC_URL", "http://localhost:8080")
+	defer os.Unsetenv("STORE_ADMIN_TOKEN")
+	defer os.Unsetenv("STORE_PUBLIC_URL")
+
+	_, db, s, r, mockPaywall := setupTestWithHandlers(t)
+	defer mockPaywall.Close()
+	ctx := context.Background()
+
+	// Create item with digital_media backend
+	category := createCategory(db, "Digital", "Digital products")
+	item := createItem(db, category.ID, "E-Book", "Test e-book", "10.00", "BTC", "digital_media", models.JSONMap{
+		"storage":          "local",
+		"file_path":        "/downloads/ebook.pdf",
+		"expiration_hours": 24,
+	})
+
+	// Checkout
+	checkoutReq := map[string]string{"item_id": item.ID, "email": "user@example.com"}
+	checkoutJSON, _ := json.Marshal(checkoutReq)
+	checkoutHTTPReq := httptest.NewRequest(http.MethodPost, "/api/checkout", bytes.NewReader(checkoutJSON))
+	checkoutW := httptest.NewRecorder()
+	r.ServeHTTP(checkoutW, checkoutHTTPReq)
+
+	if checkoutW.Code != http.StatusOK {
+		t.Fatalf("Checkout failed: %d - %s", checkoutW.Code, checkoutW.Body.String())
+	}
+
+	var checkoutResp struct {
+		PaymentID string `json:"payment_id"`
+	}
+	json.NewDecoder(checkoutW.Body).Decode(&checkoutResp)
+
+	// Confirm payment
+	err := s.ConfirmPayment(ctx, checkoutResp.PaymentID, "payment_hash_digital")
+	if err != nil {
+		t.Fatalf("Failed to confirm payment: %v", err)
+	}
+
+	// Fulfill payment
+	err = s.FulfillPayment(ctx, checkoutResp.PaymentID)
+	if err != nil {
+		t.Fatalf("Failed to fulfill payment: %v", err)
+	}
+
+	// Verify fulfillment result
+	payment, err := s.GetPayment(ctx, checkoutResp.PaymentID)
+	if err != nil {
+		t.Fatalf("Failed to get payment: %v", err)
+	}
+
+	if payment.Status != "fulfilled" {
+		t.Errorf("Expected status 'fulfilled', got %s", payment.Status)
+	}
+
+	downloadURL, ok := payment.FulfillmentResult["download_url"].(string)
+	if !ok || downloadURL == "" {
+		t.Error("Expected download_url in fulfillment result")
+	}
+
+	t.Logf("Integration test passed: Digital media handler end-to-end")
+}
+
+// TestPaymentFlow_ShippingFormHandlerEndToEnd tests shipping form handler with form submission
+func TestPaymentFlow_ShippingFormHandlerEndToEnd(t *testing.T) {
+	os.Setenv("STORE_ADMIN_TOKEN", "test-admin-token")
+	os.Setenv("STORE_PUBLIC_URL", "http://localhost:8080")
+	defer os.Unsetenv("STORE_ADMIN_TOKEN")
+	defer os.Unsetenv("STORE_PUBLIC_URL")
+
+	_, db, s, r, mockPaywall := setupTestWithHandlers(t)
+	defer mockPaywall.Close()
+	ctx := context.Background()
+
+	// Create item with shipping_form backend
+	category := createCategory(db, "Physical", "Physical products")
+	item := createItem(db, category.ID, "T-Shirt", "Custom t-shirt", "25.00", "BTC", "shipping_form", models.JSONMap{})
+
+	// Checkout
+	checkoutReq := map[string]string{"item_id": item.ID, "email": "buyer@example.com"}
+	checkoutJSON, _ := json.Marshal(checkoutReq)
+	checkoutHTTPReq := httptest.NewRequest(http.MethodPost, "/api/checkout", bytes.NewReader(checkoutJSON))
+	checkoutW := httptest.NewRecorder()
+	r.ServeHTTP(checkoutW, checkoutHTTPReq)
+
+	if checkoutW.Code != http.StatusOK {
+		t.Fatalf("Checkout failed: %d", checkoutW.Code)
+	}
+
+	var checkoutResp struct {
+		PaymentID string `json:"payment_id"`
+	}
+	json.NewDecoder(checkoutW.Body).Decode(&checkoutResp)
+
+	// Confirm payment
+	err := s.ConfirmPayment(ctx, checkoutResp.PaymentID, "payment_hash_shipping")
+	if err != nil {
+		t.Fatalf("Failed to confirm payment: %v", err)
+	}
+
+	// Submit shipping form
+	formData := map[string]interface{}{
+		"name":    "John Doe",
+		"address": "123 Main St",
+		"city":    "New York",
+		"state":   "NY",
+		"zip":     "10001",
+		"country": "USA",
+	}
+	formJSON, _ := json.Marshal(formData)
+	formReq := httptest.NewRequest(http.MethodPost, "/api/payment/"+checkoutResp.PaymentID+"/submit-form", bytes.NewReader(formJSON))
+	formW := httptest.NewRecorder()
+	r.ServeHTTP(formW, formReq)
+
+	if formW.Code != http.StatusOK {
+		t.Errorf("Form submission failed: %d - %s", formW.Code, formW.Body.String())
+	}
+
+	// Fulfill payment
+	err = s.FulfillPayment(ctx, checkoutResp.PaymentID)
+	if err != nil {
+		t.Fatalf("Failed to fulfill payment: %v", err)
+	}
+
+	// Verify fulfillment
+	payment, err := s.GetPayment(ctx, checkoutResp.PaymentID)
+	if err != nil {
+		t.Fatalf("Failed to get payment: %v", err)
+	}
+
+	if payment.Status != "fulfilled" {
+		t.Errorf("Expected status 'fulfilled', got %s", payment.Status)
+	}
+
+	if payment.FulfillmentResult["status"] != "awaiting_shipment" {
+		t.Error("Expected 'awaiting_shipment' status in fulfillment result")
+	}
+
+	t.Logf("Integration test passed: Shipping form handler end-to-end with form submission")
+}
+
+// TestPaymentFlow_PODHandlerEndToEnd tests print-on-demand handler
+func TestPaymentFlow_PODHandlerEndToEnd(t *testing.T) {
+	os.Setenv("STORE_ADMIN_TOKEN", "test-admin-token")
+	os.Setenv("STORE_PUBLIC_URL", "http://localhost:8080")
+	defer os.Unsetenv("STORE_ADMIN_TOKEN")
+	defer os.Unsetenv("STORE_PUBLIC_URL")
+
+	_, db, s, r, mockPaywall := setupTestWithHandlers(t)
+	defer mockPaywall.Close()
+	ctx := context.Background()
+
+	// Create item with pod backend
+	category := createCategory(db, "Apparel", "Print on demand apparel")
+	item := createItem(db, category.ID, "Custom Mug", "Custom printed mug", "15.00", "BTC", "pod", models.JSONMap{
+		"provider":   "printful",
+		"product_id": "PROD-123",
+		"variant_id": "VAR-456",
+	})
+
+	// Checkout
+	checkoutReq := map[string]string{"item_id": item.ID, "email": "customer@example.com"}
+	checkoutJSON, _ := json.Marshal(checkoutReq)
+	checkoutHTTPReq := httptest.NewRequest(http.MethodPost, "/api/checkout", bytes.NewReader(checkoutJSON))
+	checkoutW := httptest.NewRecorder()
+	r.ServeHTTP(checkoutW, checkoutHTTPReq)
+
+	if checkoutW.Code != http.StatusOK {
+		t.Fatalf("Checkout failed: %d", checkoutW.Code)
+	}
+
+	var checkoutResp struct {
+		PaymentID string `json:"payment_id"`
+	}
+	json.NewDecoder(checkoutW.Body).Decode(&checkoutResp)
+
+	// Confirm payment
+	err := s.ConfirmPayment(ctx, checkoutResp.PaymentID, "payment_hash_pod")
+	if err != nil {
+		t.Fatalf("Failed to confirm payment: %v", err)
+	}
+
+	// Submit shipping form (POD requires shipping info)
+	formData := map[string]interface{}{
+		"name":    "Jane Smith",
+		"address": "456 Oak Ave",
+		"city":    "Los Angeles",
+		"state":   "CA",
+		"zip":     "90001",
+		"country": "USA",
+		"size":    "M",
+	}
+	formJSON, _ := json.Marshal(formData)
+	formReq := httptest.NewRequest(http.MethodPost, "/api/payment/"+checkoutResp.PaymentID+"/submit-form", bytes.NewReader(formJSON))
+	formW := httptest.NewRecorder()
+	r.ServeHTTP(formW, formReq)
+
+	if formW.Code != http.StatusOK {
+		t.Errorf("Form submission failed: %d", formW.Code)
+	}
+
+	// Fulfill payment
+	err = s.FulfillPayment(ctx, checkoutResp.PaymentID)
+	if err != nil {
+		t.Fatalf("Failed to fulfill payment: %v", err)
+	}
+
+	// Verify fulfillment
+	payment, err := s.GetPayment(ctx, checkoutResp.PaymentID)
+	if err != nil {
+		t.Fatalf("Failed to get payment: %v", err)
+	}
+
+	if payment.Status != "fulfilled" {
+		t.Errorf("Expected status 'fulfilled', got %s", payment.Status)
+	}
+
+	orderID, ok := payment.FulfillmentResult["order_id"].(string)
+	if !ok || orderID == "" {
+		t.Error("Expected order_id in fulfillment result")
+	}
+
+	provider, ok := payment.FulfillmentResult["provider"].(string)
+	if !ok || provider != "printful" {
+		t.Error("Expected provider 'printful' in fulfillment result")
+	}
+
+	t.Logf("Integration test passed: POD handler end-to-end")
+}
+
+// TestPaymentFlow_CustomHandlerEndToEnd tests custom webhook handler
+func TestPaymentFlow_CustomHandlerEndToEnd(t *testing.T) {
+	os.Setenv("STORE_ADMIN_TOKEN", "test-admin-token")
+	os.Setenv("STORE_PUBLIC_URL", "http://localhost:8080")
+	defer os.Unsetenv("STORE_ADMIN_TOKEN")
+	defer os.Unsetenv("STORE_PUBLIC_URL")
+
+	_, db, s, r, mockPaywall := setupTestWithHandlers(t)
+	defer mockPaywall.Close()
+	ctx := context.Background()
+
+	// Create item with custom backend
+	category := createCategory(db, "Services", "Custom services")
+	item := createItem(db, category.ID, "Consultation", "1-hour consultation", "100.00", "BTC", "custom", models.JSONMap{
+		"webhook_url": "https://example.com/webhook/fulfill",
+		"method":      "POST",
+	})
+
+	// Checkout
+	checkoutReq := map[string]string{"item_id": item.ID, "email": "client@example.com"}
+	checkoutJSON, _ := json.Marshal(checkoutReq)
+	checkoutHTTPReq := httptest.NewRequest(http.MethodPost, "/api/checkout", bytes.NewReader(checkoutJSON))
+	checkoutW := httptest.NewRecorder()
+	r.ServeHTTP(checkoutW, checkoutHTTPReq)
+
+	if checkoutW.Code != http.StatusOK {
+		t.Fatalf("Checkout failed: %d", checkoutW.Code)
+	}
+
+	var checkoutResp struct {
+		PaymentID string `json:"payment_id"`
+	}
+	json.NewDecoder(checkoutW.Body).Decode(&checkoutResp)
+
+	// Confirm payment
+	err := s.ConfirmPayment(ctx, checkoutResp.PaymentID, "payment_hash_custom")
+	if err != nil {
+		t.Fatalf("Failed to confirm payment: %v", err)
+	}
+
+	// Fulfill payment
+	err = s.FulfillPayment(ctx, checkoutResp.PaymentID)
+	if err != nil {
+		t.Fatalf("Failed to fulfill payment: %v", err)
+	}
+
+	// Verify fulfillment
+	payment, err := s.GetPayment(ctx, checkoutResp.PaymentID)
+	if err != nil {
+		t.Fatalf("Failed to get payment: %v", err)
+	}
+
+	if payment.Status != "fulfilled" {
+		t.Errorf("Expected status 'fulfilled', got %s", payment.Status)
+	}
+
+	webhookCalled, ok := payment.FulfillmentResult["webhook_called"].(bool)
+	if !ok || !webhookCalled {
+		t.Error("Expected webhook_called=true in fulfillment result")
+	}
+
+	webhookURL, ok := payment.FulfillmentResult["webhook_url"].(string)
+	if !ok || webhookURL != "https://example.com/webhook/fulfill" {
+		t.Error("Expected webhook_url in fulfillment result")
+	}
+
+	t.Logf("Integration test passed: Custom handler end-to-end")
 }

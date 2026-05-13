@@ -136,6 +136,11 @@ func (h *Handler) CreateCheckout(w http.ResponseWriter, r *http.Request) {
 	}
 	payment.PayerInfo["email"] = req.Email
 
+	// Save payer info to database
+	if err := h.store.UpdatePaymentPayerInfo(r.Context(), payment.ID, payment.PayerInfo); err != nil {
+		log.Printf("Failed to update payer info: %v", err)
+	}
+
 	// Create invoice with paywall service
 	callbackURL := fmt.Sprintf("%s/webhook/payment-confirmed", os.Getenv("STORE_PUBLIC_URL"))
 	invoice, err := h.paywallClient.CreateInvoice(r.Context(), payment.Amount, payment.Currency, callbackURL)
