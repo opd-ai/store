@@ -50,7 +50,7 @@ func NewClient(baseURL, apiKey string) *Client {
 }
 
 // doRequest performs an HTTP POST request and decodes the JSON response.
-func (c *Client) doRequest(ctx context.Context, endpoint string, reqBody interface{}, respBody interface{}) error {
+func (c *Client) doRequest(ctx context.Context, endpoint string, reqBody, respBody interface{}) error {
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request: %w", err)

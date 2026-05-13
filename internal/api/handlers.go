@@ -849,7 +849,7 @@ func (h *Handler) TrackDownload(w http.ResponseWriter, r *http.Request) {
 
 // WebhookPaymentConfirmed handles payment confirmation webhooks from the paywall service.
 func (h *Handler) WebhookPaymentConfirmed(w http.ResponseWriter, r *http.Request) {
-	// Read request body
+	// Read and verify webhook
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		log.Printf("Failed to read webhook body: %v", err)
@@ -858,25 +858,69 @@ func (h *Handler) WebhookPaymentConfirmed(w http.ResponseWriter, r *http.Request
 	}
 	defer func() { _ = r.Body.Close() }()
 
-	// Verify webhook signature
-	signature := r.Header.Get("X-Webhook-Signature")
-	webhookSecret := os.Getenv("STORE_PAYWALL_WEBHOOK_SECRET")
-	if webhookSecret != "" && signature != "" {
-		valid, err := h.paywallClient.VerifyWebhook(signature, body, webhookSecret)
-		if err != nil {
-			log.Printf("Failed to verify webhook signature: %v", err)
-			sendError(w, http.StatusInternalServerError, "Failed to verify signature")
-			return
-		}
-		if !valid {
-			log.Printf("Invalid webhook signature")
-			sendError(w, http.StatusUnauthorized, "Invalid signature")
-			return
-		}
+	// Verify signature
+	if err := h.verifyWebhookSignature(r, body); err != nil {
+		sendError(w, http.StatusUnauthorized, err.Error())
+		return
 	}
 
-	// Parse webhook payload
-	var payload struct {
+	// Parse payload
+	payload, err := parseWebhookPayload(body)
+	if err != nil {
+		log.Printf("Failed to parse webhook payload: %v", err)
+		sendError(w, http.StatusBadRequest, "Invalid payload format")
+		return
+	}
+
+	// Process payment confirmation
+	if err := h.processPaymentConfirmation(r.Context(), payload); err != nil {
+		log.Printf("Failed to process payment confirmation: %v", err)
+		sendError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	sendJSON(w, http.StatusOK, map[string]string{
+		"status":     "confirmed",
+		"payment_id": payload.PaymentID,
+	})
+}
+
+// webhookPayload represents the webhook payload structure.
+type webhookPayload struct {
+	InvoiceID   string
+	Status      string
+	PaymentHash string
+	Amount      string
+	Currency    string
+	PaymentID   string
+}
+
+// verifyWebhookSignature verifies the webhook signature if configured.
+func (h *Handler) verifyWebhookSignature(r *http.Request, body []byte) error {
+	signature := r.Header.Get("X-Webhook-Signature")
+	webhookSecret := os.Getenv("STORE_PAYWALL_WEBHOOK_SECRET")
+
+	if webhookSecret == "" || signature == "" {
+		return nil // No verification configured
+	}
+
+	valid, err := h.paywallClient.VerifyWebhook(signature, body, webhookSecret)
+	if err != nil {
+		log.Printf("Failed to verify webhook signature: %v", err)
+		return fmt.Errorf("failed to verify signature")
+	}
+
+	if !valid {
+		log.Printf("Invalid webhook signature")
+		return fmt.Errorf("invalid signature")
+	}
+
+	return nil
+}
+
+// parseWebhookPayload parses the webhook payload from JSON.
+func parseWebhookPayload(body []byte) (*webhookPayload, error) {
+	var raw struct {
 		InvoiceID   string `json:"invoice_id"`
 		Status      string `json:"status"`
 		PaymentHash string `json:"tx_hash"`
@@ -884,32 +928,38 @@ func (h *Handler) WebhookPaymentConfirmed(w http.ResponseWriter, r *http.Request
 		Currency    string `json:"currency"`
 	}
 
-	if err := json.Unmarshal(body, &payload); err != nil {
-		log.Printf("Failed to parse webhook payload: %v", err)
-		sendError(w, http.StatusBadRequest, "Invalid payload format")
-		return
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, err
 	}
 
+	return &webhookPayload{
+		InvoiceID:   raw.InvoiceID,
+		Status:      raw.Status,
+		PaymentHash: raw.PaymentHash,
+		Amount:      raw.Amount,
+		Currency:    raw.Currency,
+	}, nil
+}
+
+// processPaymentConfirmation confirms and optionally fulfills a payment.
+func (h *Handler) processPaymentConfirmation(ctx context.Context, payload *webhookPayload) error {
 	// Get payment by invoice ID
-	payment, err := h.store.GetPaymentByInvoiceID(r.Context(), payload.InvoiceID)
+	payment, err := h.store.GetPaymentByInvoiceID(ctx, payload.InvoiceID)
 	if err != nil {
-		log.Printf("Payment not found for invoice %s: %v", payload.InvoiceID, err)
-		sendError(w, http.StatusNotFound, "Payment not found")
-		return
+		return fmt.Errorf("payment not found for invoice %s: %w", payload.InvoiceID, err)
 	}
+	payload.PaymentID = payment.ID
 
 	// Confirm payment
-	if err := h.store.ConfirmPayment(r.Context(), payment.ID, payload.PaymentHash); err != nil {
-		log.Printf("Failed to confirm payment %s: %v", payment.ID, err)
-		sendError(w, http.StatusInternalServerError, "Failed to confirm payment")
-		return
+	if err := h.store.ConfirmPayment(ctx, payment.ID, payload.PaymentHash); err != nil {
+		return fmt.Errorf("failed to confirm payment %s: %w", payment.ID, err)
 	}
 
 	log.Printf("Payment %s confirmed via webhook (invoice: %s, hash: %s)", payment.ID, payload.InvoiceID, payload.PaymentHash)
 
-	// Auto-fulfill if enabled (default: true)
+	// Auto-fulfill if enabled
 	if h.shouldAutoFulfill() {
-		if err := h.store.FulfillPayment(r.Context(), payment.ID); err != nil {
+		if err := h.store.FulfillPayment(ctx, payment.ID); err != nil {
 			log.Printf("Failed to auto-fulfill payment %s: %v", payment.ID, err)
 			// Don't return error - payment is confirmed, fulfillment can be retried
 		} else {
@@ -917,10 +967,7 @@ func (h *Handler) WebhookPaymentConfirmed(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	sendJSON(w, http.StatusOK, map[string]string{
-		"status":     "confirmed",
-		"payment_id": payment.ID,
-	})
+	return nil
 }
 
 // Helper functions

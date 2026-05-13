@@ -100,7 +100,7 @@ func NewClient(apiKey string) *Client {
 
 // doRequest performs an HTTP request to the Printful API and decodes the response.
 // If result is nil, the response body is not decoded (useful for DELETE requests).
-func (c *Client) doRequest(ctx context.Context, method, endpoint string, body interface{}, result interface{}) error {
+func (c *Client) doRequest(ctx context.Context, method, endpoint string, body, result interface{}) error {
 	var reqBody io.Reader
 	if body != nil {
 		jsonData, err := json.Marshal(body)
