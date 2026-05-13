@@ -172,17 +172,27 @@ func parseWebhookResponse(respBody []byte, statusCode int) (map[string]interface
 func (h *CustomHandler) buildPayload(payment *models.Payment, item *models.Item, config models.JSONMap) map[string]interface{} {
 	payload := make(map[string]interface{})
 
-	// Start with template if provided
+	h.applyPayloadTemplate(payload, config, payment, item)
+	h.setDefaultPayloadFields(payload, payment, item)
+
+	return payload
+}
+
+// applyPayloadTemplate applies template values to the payload if a template is provided.
+func (h *CustomHandler) applyPayloadTemplate(payload map[string]interface{}, config models.JSONMap, payment *models.Payment, item *models.Item) {
 	if template, ok := config["payload_template"].(map[string]interface{}); ok {
 		for key, value := range template {
 			payload[key] = h.expandTemplate(value, payment, item)
 		}
 	}
+}
 
-	// Ensure core fields are always present
+// setDefaultPayloadFields ensures core fields are always present in the payload.
+func (h *CustomHandler) setDefaultPayloadFields(payload map[string]interface{}, payment *models.Payment, item *models.Item) {
 	if _, ok := payload["item_id"]; !ok {
 		payload["item_id"] = item.ID
 	}
+
 	if _, ok := payload["payment_hash"]; !ok {
 		if payment.PaymentHash != nil {
 			payload["payment_hash"] = *payment.PaymentHash
@@ -190,16 +200,14 @@ func (h *CustomHandler) buildPayload(payment *models.Payment, item *models.Item,
 			payload["payment_hash"] = ""
 		}
 	}
+
 	if _, ok := payload["payment_id"]; !ok {
 		payload["payment_id"] = payment.ID
 	}
 
-	// Add payer email if available
 	if email, ok := payment.PayerInfo["email"].(string); ok {
 		payload["payer_email"] = email
 	}
-
-	return payload
 }
 
 // expandTemplate expands template strings with payment/item data.

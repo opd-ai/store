@@ -39,18 +39,29 @@ type VerificationResponse struct {
 	Currency  string `json:"currency"`
 }
 
-func handleCreatePayment(w http.ResponseWriter, r *http.Request) {
+// readJSONRequest validates the HTTP method and reads the request body.
+// Returns the body bytes or writes an error response and returns nil.
+func readJSONRequest(w http.ResponseWriter, r *http.Request) []byte {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+		return nil
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
-		return
+		return nil
 	}
 	defer func() { _ = r.Body.Close() }()
+
+	return body
+}
+
+func handleCreatePayment(w http.ResponseWriter, r *http.Request) {
+	body := readJSONRequest(w, r)
+	if body == nil {
+		return
+	}
 
 	var req PaymentRequest
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -72,17 +83,10 @@ func handleCreatePayment(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleVerifyPayment(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	body := readJSONRequest(w, r)
+	if body == nil {
 		return
 	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Failed to read request body", http.StatusBadRequest)
-		return
-	}
-	defer func() { _ = r.Body.Close() }()
 
 	var req VerificationRequest
 	if err := json.Unmarshal(body, &req); err != nil {

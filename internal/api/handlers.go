@@ -32,6 +32,36 @@ func NewHandler(s *store.Store, paywallClient *paywall.Client) *Handler {
 	}
 }
 
+// getPaymentOrError retrieves a payment by ID from URL vars or sends a 404 error.
+// Returns nil if the payment was not found (error already sent to client).
+func (h *Handler) getPaymentOrError(w http.ResponseWriter, r *http.Request, varName string) *models.Payment {
+	vars := mux.Vars(r)
+	paymentID := vars[varName]
+
+	payment, err := h.store.GetPayment(r.Context(), paymentID)
+	if err != nil {
+		sendError(w, http.StatusNotFound, "Payment not found")
+		return nil
+	}
+
+	return payment
+}
+
+// getItemOrError retrieves an item by ID from URL vars or sends a 404 error.
+// Returns nil if the item was not found (error already sent to client).
+func (h *Handler) getItemOrError(w http.ResponseWriter, r *http.Request, varName string) *models.Item {
+	vars := mux.Vars(r)
+	itemID := vars[varName]
+
+	item, err := h.store.GetItem(r.Context(), itemID)
+	if err != nil {
+		sendError(w, http.StatusNotFound, "Item not found")
+		return nil
+	}
+
+	return item
+}
+
 // JSON response wrapper
 type JSONResponse struct {
 	Success bool        `json:"success"`
@@ -92,12 +122,8 @@ func (h *Handler) GetCatalog(w http.ResponseWriter, r *http.Request) {
 
 // GetItem returns a single item by ID.
 func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	itemID := vars["id"]
-
-	item, err := h.store.GetItem(r.Context(), itemID)
-	if err != nil {
-		sendError(w, http.StatusNotFound, "Item not found")
+	item := h.getItemOrError(w, r, "id")
+	if item == nil {
 		return
 	}
 
@@ -116,48 +142,62 @@ func (h *Handler) CreateCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get item
 	item, err := h.store.GetItem(r.Context(), req.ItemID)
 	if err != nil {
 		sendError(w, http.StatusNotFound, "Item not found")
 		return
 	}
 
-	// Create payment
 	payment, err := h.store.CreatePayment(r.Context(), req.ItemID, item.Price, item.Currency)
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	// Store payer email
-	if payment.PayerInfo == nil {
-		payment.PayerInfo = models.JSONMap{}
-	}
-	payment.PayerInfo["email"] = req.Email
+	h.savePayerEmail(r.Context(), payment, req.Email)
 
-	// Save payer info to database
-	if err := h.store.UpdatePaymentPayerInfo(r.Context(), payment.ID, payment.PayerInfo); err != nil {
-		log.Printf("Failed to update payer info: %v", err)
-	}
-
-	// Create invoice with paywall service
-	callbackURL := fmt.Sprintf("%s/webhook/payment-confirmed", os.Getenv("STORE_PUBLIC_URL"))
-	invoice, err := h.paywallClient.CreateInvoice(r.Context(), payment.Amount, payment.Currency, callbackURL)
+	invoice, err := h.createPaywallInvoice(r.Context(), payment)
 	if err != nil {
-		log.Printf("Failed to create invoice: %v", err)
 		sendError(w, http.StatusInternalServerError, "Failed to create payment invoice")
 		return
 	}
 
-	// Update payment with invoice ID
 	if err := h.store.UpdatePaymentInvoice(r.Context(), payment.ID, invoice.InvoiceID); err != nil {
 		log.Printf("Failed to update payment invoice: %v", err)
 		sendError(w, http.StatusInternalServerError, "Failed to update payment")
 		return
 	}
 
-	sendJSON(w, http.StatusCreated, map[string]interface{}{
+	response := h.buildCheckoutResponse(payment, invoice)
+	sendJSON(w, http.StatusCreated, response)
+}
+
+// savePayerEmail stores the payer's email in the payment record.
+func (h *Handler) savePayerEmail(ctx context.Context, payment *models.Payment, email string) {
+	if payment.PayerInfo == nil {
+		payment.PayerInfo = models.JSONMap{}
+	}
+	payment.PayerInfo["email"] = email
+
+	if err := h.store.UpdatePaymentPayerInfo(ctx, payment.ID, payment.PayerInfo); err != nil {
+		log.Printf("Failed to update payer info: %v", err)
+	}
+}
+
+// createPaywallInvoice creates an invoice with the paywall service.
+func (h *Handler) createPaywallInvoice(ctx context.Context, payment *models.Payment) (*paywall.Invoice, error) {
+	callbackURL := fmt.Sprintf("%s/webhook/payment-confirmed", os.Getenv("STORE_PUBLIC_URL"))
+	invoice, err := h.paywallClient.CreateInvoice(ctx, payment.Amount, payment.Currency, callbackURL)
+	if err != nil {
+		log.Printf("Failed to create invoice: %v", err)
+		return nil, err
+	}
+	return invoice, nil
+}
+
+// buildCheckoutResponse constructs the checkout response from payment and invoice data.
+func (h *Handler) buildCheckoutResponse(payment *models.Payment, invoice *paywall.Invoice) map[string]interface{} {
+	return map[string]interface{}{
 		"payment_id":      payment.ID,
 		"invoice_id":      invoice.InvoiceID,
 		"status":          payment.Status,
@@ -166,17 +206,13 @@ func (h *Handler) CreateCheckout(w http.ResponseWriter, r *http.Request) {
 		"payment_address": invoice.PaymentAddress,
 		"qr_code":         invoice.QRCode,
 		"expires_at":      invoice.ExpiresAt,
-	})
+	}
 }
 
 // GetPaymentStatus returns the status of a payment.
 func (h *Handler) GetPaymentStatus(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	paymentID := vars["id"]
-
-	payment, err := h.store.GetPayment(r.Context(), paymentID)
-	if err != nil {
-		sendError(w, http.StatusNotFound, "Payment not found")
+	payment := h.getPaymentOrError(w, r, "id")
+	if payment == nil {
 		return
 	}
 
@@ -383,72 +419,83 @@ func (h *Handler) GetOrderStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	vars := mux.Vars(r)
-	paymentID := vars["payment_id"]
+	payment := h.getPaymentOrError(w, r, "payment_id")
+	if payment == nil {
+		return
+	}
 
-	// Get payment
-	payment, err := h.store.GetPayment(r.Context(), paymentID)
+	providerName, orderID, err := extractProviderAndOrderID(payment)
 	if err != nil {
-		sendError(w, http.StatusNotFound, "Payment not found")
+		sendError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	// Check if payment has fulfillment result
-	if payment.FulfillmentResult == nil || len(payment.FulfillmentResult) == 0 {
-		sendError(w, http.StatusNotFound, "No fulfillment result for this payment")
-		return
-	}
-
-	// Extract provider and order ID from fulfillment result
-	providerName, _ := payment.FulfillmentResult["provider"].(string)
-	orderID, _ := payment.FulfillmentResult["order_id"].(string)
-
-	if providerName == "" || orderID == "" {
-		sendError(w, http.StatusBadRequest, "Invalid fulfillment result: missing provider or order_id")
-		return
-	}
-
-	// Get item to extract API key
 	item, err := h.store.GetItem(r.Context(), payment.ItemID)
 	if err != nil {
 		sendError(w, http.StatusNotFound, "Item not found")
 		return
 	}
 
-	apiKey, ok := item.BackendConfig["api_key"].(string)
-	if !ok || apiKey == "" {
-		sendError(w, http.StatusBadRequest, "Missing API key in item configuration")
+	apiKey, err := getProviderAPIKey(item)
+	if err != nil {
+		sendError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	// Create provider instance
 	provider, err := pod.NewProvider(providerName, apiKey)
 	if err != nil {
 		sendError(w, http.StatusBadRequest, fmt.Sprintf("Failed to create provider: %v", err))
 		return
 	}
 
-	// Get order status from provider
 	status, err := provider.GetStatus(r.Context(), orderID)
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to get order status: %v", err))
 		return
 	}
 
-	// Update fulfillment result with latest status
+	updatedResult := h.updateFulfillmentWithStatus(r.Context(), payment, status, payment.ID)
+	sendJSON(w, http.StatusOK, updatedResult)
+}
+
+// extractProviderAndOrderID extracts provider name and order ID from payment fulfillment result.
+func extractProviderAndOrderID(payment *models.Payment) (string, string, error) {
+	if payment.FulfillmentResult == nil || len(payment.FulfillmentResult) == 0 {
+		return "", "", fmt.Errorf("no fulfillment result for this payment")
+	}
+
+	providerName, _ := payment.FulfillmentResult["provider"].(string)
+	orderID, _ := payment.FulfillmentResult["order_id"].(string)
+
+	if providerName == "" || orderID == "" {
+		return "", "", fmt.Errorf("invalid fulfillment result: missing provider or order_id")
+	}
+
+	return providerName, orderID, nil
+}
+
+// getProviderAPIKey retrieves the API key from item backend configuration.
+func getProviderAPIKey(item *models.Item) (string, error) {
+	apiKey, ok := item.BackendConfig["api_key"].(string)
+	if !ok || apiKey == "" {
+		return "", fmt.Errorf("missing API key in item configuration")
+	}
+	return apiKey, nil
+}
+
+// updateFulfillmentWithStatus updates the fulfillment result with latest status from provider.
+func (h *Handler) updateFulfillmentWithStatus(ctx context.Context, payment *models.Payment, status *pod.OrderStatusResponse, paymentID string) models.JSONMap {
 	updatedResult := payment.FulfillmentResult
 	updatedResult["status"] = status.Status
 	updatedResult["tracking_url"] = status.TrackingURL
 	updatedResult["shipping_date"] = status.ShippingDate
 	updatedResult["last_updated"] = status.LastUpdated
 
-	// Save updated fulfillment result
-	if err := h.store.UpdateFulfillmentResult(r.Context(), paymentID, updatedResult); err != nil {
+	if err := h.store.UpdateFulfillmentResult(ctx, paymentID, updatedResult); err != nil {
 		log.Printf("Failed to update fulfillment result: %v", err)
-		// Continue anyway to return the status
 	}
 
-	sendJSON(w, http.StatusOK, updatedResult)
+	return updatedResult
 }
 
 // CreateCategory creates a new category.

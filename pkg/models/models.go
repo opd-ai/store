@@ -168,16 +168,20 @@ func NewPayment(itemID, amount, currency string) *Payment {
 func (p *Payment) Confirm() {
 	now := time.Now()
 	p.ConfirmedAt = &now
-	p.Status = "confirmed"
-	p.UpdatedAt = now
+	p.updateStatus("confirmed", now)
 }
 
 // Fulfill marks a payment as fulfilled.
 func (p *Payment) Fulfill(result map[string]interface{}) {
 	now := time.Now()
 	p.FulfilledAt = &now
-	p.Status = "fulfilled"
 	p.FulfillmentResult = result
+	p.updateStatus("fulfilled", now)
+}
+
+// updateStatus updates the payment status and timestamp.
+func (p *Payment) updateStatus(status string, now time.Time) {
+	p.Status = status
 	p.UpdatedAt = now
 }
 

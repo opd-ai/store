@@ -197,63 +197,92 @@ func (h *DigitalMediaHandler) Metadata() handler.HandlerMetadata {
 func (h *DigitalMediaHandler) generateS3URLWithSize(ctx context.Context, item *models.Item, config handler.Config) (string, int64, error) {
 	bucket := config.GetString("s3_bucket")
 	region := config.GetString("s3_region")
-	prefix := config.GetString("s3_key_prefix")
-	s3Key := config.GetString("s3_key")
+	key := getS3Key(item, config)
+	expirationHours := getExpirationDuration(config)
 
+	svc, err := createS3Session(region)
+	if err != nil {
+		return "", 0, err
+	}
+
+	fileSize, err := getObjectSize(ctx, svc, bucket, key)
+	if err != nil {
+		return "", 0, err
+	}
+
+	url, err := generatePresignedURL(svc, bucket, key, expirationHours)
+	if err != nil {
+		return "", 0, err
+	}
+
+	return url, fileSize, nil
+}
+
+// getS3Key constructs the S3 key from item and config.
+func getS3Key(item *models.Item, config handler.Config) string {
+	s3Key := config.GetString("s3_key")
+	if s3Key != "" {
+		return s3Key
+	}
+
+	prefix := config.GetString("s3_key_prefix")
 	if prefix == "" {
 		prefix = "items/"
 	}
 
-	// Construct the S3 key - use explicit s3_key if provided, otherwise use prefix + item.ID
-	key := s3Key
-	if key == "" {
-		key = prefix + item.ID
-	}
+	return prefix + item.ID
+}
 
-	// Get expiration duration
+// getExpirationDuration returns the expiration duration in hours from config.
+func getExpirationDuration(config handler.Config) int {
 	expirationHours := config.GetInt("expiration_hours")
 	if expirationHours == 0 {
-		expirationHours = 24
+		return 24
 	}
+	return expirationHours
+}
 
-	// Create AWS session
+// createS3Session creates an AWS S3 service client.
+func createS3Session(region string) (*s3.S3, error) {
 	sess, err := session.NewSession(&aws.Config{
 		Region: aws.String(region),
 	})
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to create AWS session: %w", err)
+		return nil, fmt.Errorf("failed to create AWS session: %w", err)
 	}
+	return s3.New(sess), nil
+}
 
-	// Create S3 service client
-	svc := s3.New(sess)
-
-	// Get object metadata to retrieve file size
+// getObjectSize retrieves the file size from S3 object metadata.
+func getObjectSize(ctx context.Context, svc *s3.S3, bucket, key string) (int64, error) {
 	headOutput, err := svc.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to get object metadata: %w", err)
+		return 0, fmt.Errorf("failed to get object metadata: %w", err)
 	}
 
-	fileSize := int64(0)
 	if headOutput.ContentLength != nil {
-		fileSize = *headOutput.ContentLength
+		return *headOutput.ContentLength, nil
 	}
 
-	// Generate presigned URL request
+	return 0, nil
+}
+
+// generatePresignedURL generates a presigned S3 URL with the specified expiration.
+func generatePresignedURL(svc *s3.S3, bucket, key string, expirationHours int) (string, error) {
 	req, _ := svc.GetObjectRequest(&s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
 
-	// Sign the request with expiration
 	url, err := req.Presign(time.Duration(expirationHours) * time.Hour)
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to generate presigned URL: %w", err)
+		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
 	}
 
-	return url, fileSize, nil
+	return url, nil
 }
 
 // generateS3URL generates a presigned S3 URL for the item (without size lookup).
