@@ -186,7 +186,7 @@ jobs:
       - name: Create .env file
         run: |
           cat > .env << EOF
-          STORE_DATABASE_URL=postgres://store_user:store_password@postgres:5432/store_db
+          STORE_DATABASE_PATH=/app/data/store.db
           STORE_PORT=8080
           STORE_HOST=0.0.0.0
           STORE_PAYWALL_URL=http://paywall-mock:8081
@@ -204,15 +204,13 @@ jobs:
 
       - name: Wait for services to be ready
         run: |
-          echo "Waiting for PostgreSQL..."
-          timeout 60 bash -c 'until docker-compose exec -T postgres pg_isready -U store_user -d store_db; do sleep 2; done'
           echo "Waiting for store service..."
           timeout 60 bash -c 'until curl -f http://localhost:8080/health; do sleep 2; done'
           echo "Waiting for paywall mock..."
           timeout 60 bash -c 'until curl -f http://localhost:8081/health; do sleep 2; done'
           echo "All services ready"
 
-      - name: Run database migration check
+      - name: Run database initialization check
         run: docker-compose exec -T store ./store --version || echo "Service running"
 
       - name: Test API endpoints
@@ -231,7 +229,6 @@ jobs:
       - name: Show logs on failure
         if: failure()
         run: |
-          docker-compose logs postgres
           docker-compose logs store
           docker-compose logs paywall-mock
 

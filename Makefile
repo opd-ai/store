@@ -49,7 +49,6 @@ docker-up:
 	@docker-compose ps
 	@echo ""
 	@echo "API available at: http://localhost:8080"
-	@echo "PostgreSQL at: localhost:5432"
 	@echo "Paywall mock at: http://localhost:8081"
 
 docker-down:
@@ -86,21 +85,6 @@ install-deps:
 	@echo "Downloading dependencies..."
 	go mod download
 	go mod tidy
-
-# Additional development tasks
-migrate-up: docker-up
-	@echo "Running database migrations..."
-	go run cmd/store/main.go migrate
-
-psql:
-	psql postgres://store_user:store_password@localhost:5432/store_db
-
-tail-logs:
-	docker-compose logs -f store
-
-seed-data:
-	@echo "Seeding test data..."
-	go run scripts/seed.go
 
 check: fmt lint vet test
 	@echo "All checks passed!"
