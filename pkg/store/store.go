@@ -14,12 +14,67 @@ import (
 	"github.com/opd-ai/store/pkg/models"
 )
 
+// Service defines the interface for the core store operations.
+type Service interface {
+	// Payment operations
+	CreatePayment(ctx context.Context, itemID, amount, currency string) (*models.Payment, error)
+	UpdatePaymentInvoice(ctx context.Context, paymentID, invoiceID string) error
+	UpdatePaymentPayerInfo(ctx context.Context, paymentID string, payerInfo models.JSONMap) error
+	ConfirmPayment(ctx context.Context, paymentID, paymentHash string) error
+	FulfillPayment(ctx context.Context, paymentID string) error
+	GetPayment(ctx context.Context, paymentID string) (*models.Payment, error)
+	GetPaymentByInvoiceID(ctx context.Context, invoiceID string) (*models.Payment, error)
+	ListPayments(ctx context.Context, filters map[string]interface{}) ([]*models.Payment, error)
+	UpdateFulfillmentResult(ctx context.Context, paymentID string, result models.JSONMap) error
+
+	// Catalog operations
+	GetCatalog(ctx context.Context) (map[string]interface{}, error)
+	GetItem(ctx context.Context, itemID string) (*models.Item, error)
+
+	// Form submission operations
+	SubmitFormData(ctx context.Context, paymentID string, formData models.JSONMap) (*models.FormSubmission, error)
+	GetFormSubmission(ctx context.Context, paymentID string) (*models.FormSubmission, error)
+
+	// Handler operations
+	HandlerMetadata() map[string]handler.HandlerMetadata
+
+	// Category operations
+	CreateCategory(ctx context.Context, name, description string) (*models.Category, error)
+	ListCategories(ctx context.Context) ([]*models.Category, error)
+	UpdateCategory(ctx context.Context, id string, updates map[string]interface{}) error
+	DeleteCategory(ctx context.Context, id string) error
+
+	// Item operations
+	CreateItem(ctx context.Context, item *models.Item) (*models.Item, error)
+	ListItems(ctx context.Context, filters map[string]interface{}) ([]*models.Item, error)
+	UpdateItem(ctx context.Context, id string, updates map[string]interface{}) error
+	DeleteItem(ctx context.Context, id string) error
+
+	// Tag operations
+	CreateTag(ctx context.Context, name string) (*models.Tag, error)
+	ListTags(ctx context.Context) ([]*models.Tag, error)
+	UpdateTag(ctx context.Context, id string, updates map[string]interface{}) error
+	DeleteTag(ctx context.Context, id string) error
+
+	// Item-Tag association operations
+	AddItemTag(ctx context.Context, itemID, tagID string) error
+	RemoveItemTag(ctx context.Context, itemID, tagID string) error
+
+	// Download tracking operations
+	RecordDownload(ctx context.Context, paymentID, ipAddress, userAgent string) error
+	GetDownloadCount(ctx context.Context, paymentID string) (int, error)
+	CheckDownloadLimit(ctx context.Context, paymentID string, maxDownloads int) (bool, error)
+}
+
 // Store orchestrates the payment-to-fulfillment workflow.
 // It manages payment creation, confirmation, and handler dispatch.
 type Store struct {
 	boltDB   *bolt.DB
 	registry *handler.Registry
 }
+
+// Verify that Store implements Service at compile time.
+var _ Service = (*Store)(nil)
 
 // NewStore creates a new Store instance.
 func NewStore(boltDB *bolt.DB, registry *handler.Registry) *Store {
