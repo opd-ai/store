@@ -31,34 +31,6 @@ func TestPrintOnDemandHandler_Validate(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "valid redbubble config",
-			config: models.JSONMap{
-				"provider": "redbubble",
-				"api_key":  "test_key",
-				"product_mapping": map[string]interface{}{
-					"item-123": map[string]interface{}{
-						"product_id": 456,
-						"variant_id": 789,
-					},
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name: "valid teespring config",
-			config: models.JSONMap{
-				"provider": "teespring",
-				"api_key":  "test_key",
-				"product_mapping": map[string]interface{}{
-					"item-123": map[string]interface{}{
-						"product_id": 456,
-						"variant_id": 789,
-					},
-				},
-			},
-			wantErr: false,
-		},
-		{
 			name: "missing provider",
 			config: models.JSONMap{
 				"api_key": "test_key",

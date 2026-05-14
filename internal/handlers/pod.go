@@ -10,7 +10,7 @@ import (
 )
 
 // PrintOnDemandHandler delegates to external print-on-demand services.
-// It supports providers like Printful, Redbubble, and similar PoD platforms.
+// It supports providers like Printful and similar PoD platforms.
 type PrintOnDemandHandler struct{}
 
 // NewPrintOnDemandHandler creates a new print-on-demand handler.
@@ -237,9 +237,7 @@ func (h *PrintOnDemandHandler) Validate(config models.JSONMap) error {
 	}
 
 	validProviders := map[string]bool{
-		"printful":  true,
-		"redbubble": true,
-		"teespring": true,
+		"printful": true,
 	}
 
 	if !validProviders[provider] {
@@ -254,14 +252,14 @@ func (h *PrintOnDemandHandler) Metadata() handler.HandlerMetadata {
 	return handler.HandlerMetadata{
 		Type:        "pod",
 		DisplayName: "Print-on-Demand Integration",
-		Description: "Automatically create orders with print-on-demand providers (Printful, Redbubble, etc). Integrates with PoD vendor APIs for seamless fulfillment.",
+		Description: "Automatically create orders with print-on-demand providers (Printful, etc). Integrates with PoD vendor APIs for seamless fulfillment.",
 		RequiredFields: []handler.Field{
 			{
 				Name:        "provider",
 				Type:        "string",
 				Description: "Print-on-demand service provider",
 				Example:     "printful",
-				Validation:  "must be 'printful', 'redbubble', or 'teespring'",
+				Validation:  "must be 'printful'",
 				Required:    true,
 			},
 			{

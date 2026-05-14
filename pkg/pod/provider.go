@@ -66,10 +66,6 @@ func NewProvider(providerName, apiKey string) (Provider, error) {
 	switch providerName {
 	case "printful":
 		return NewPrintfulProvider(apiKey), nil
-	case "redbubble":
-		return NewRedbubbleProvider(apiKey), nil
-	case "teespring":
-		return NewTeespringProvider(apiKey), nil
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", providerName)
 	}

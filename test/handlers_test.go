@@ -245,7 +245,7 @@ func TestPrintOnDemandHandler(t *testing.T) {
 
 	// Test validation with valid config
 	validConfig := models.JSONMap{
-		"provider":        "redbubble",
+		"provider":        "printful",
 		"api_key":         "sk_test_123",
 		"product_mapping": map[string]interface{}{},
 	}
@@ -263,48 +263,8 @@ func TestPrintOnDemandHandler(t *testing.T) {
 		t.Error("expected validation error for invalid provider")
 	}
 
-	// Test fulfillment with non-Printful provider (uses stub response)
-	ctx := context.Background()
-	payment := &models.Payment{
-		ID:     models.NewID(),
-		Status: "confirmed",
-		PayerInfo: models.JSONMap{
-			"name":         "John Doe",
-			"address1":     "123 Main St",
-			"city":         "New York",
-			"state_code":   "NY",
-			"country_code": "US",
-			"zip":          "10001",
-			"email":        "john@example.com",
-		},
-	}
-	item := &models.Item{
-		ID: models.NewID(),
-	}
-
-	// Add product mapping for this specific item
-	item.BackendConfig = models.JSONMap{
-		"provider": "redbubble",
-		"api_key":  "sk_test_123",
-		"product_mapping": map[string]interface{}{
-			item.ID: map[string]interface{}{
-				"variant_id": "12345",
-			},
-		},
-	}
-
-	result, err := h.Handle(ctx, payment, item)
-	if err != nil {
-		t.Errorf("Handle failed: %v", err)
-	}
-
-	// Verify result
-	if _, ok := result["order_id"]; !ok {
-		t.Error("expected order_id in result")
-	}
-	if _, ok := result["tracking_url"]; !ok {
-		t.Error("expected tracking_url in result")
-	}
+	// Note: Handle() test requires valid Printful API credentials
+	// Integration tests with valid credentials should be run separately
 
 	t.Log("PrintOnDemandHandler test passed")
 }
@@ -548,32 +508,6 @@ func TestPrintOnDemandHandler_Validate_TableDriven(t *testing.T) {
 				"product_mapping": map[string]interface{}{
 					"item-123": map[string]interface{}{
 						"variant_id": "456",
-					},
-				},
-			},
-			wantError: false,
-		},
-		{
-			name: "valid redbubble config",
-			config: models.JSONMap{
-				"provider": "redbubble",
-				"api_key":  "test-api-key",
-				"product_mapping": map[string]interface{}{
-					"item-123": map[string]interface{}{
-						"variant_id": "rb-456",
-					},
-				},
-			},
-			wantError: false,
-		},
-		{
-			name: "valid teespring config",
-			config: models.JSONMap{
-				"provider": "teespring",
-				"api_key":  "test-api-key",
-				"product_mapping": map[string]interface{}{
-					"item-123": map[string]interface{}{
-						"variant_id": "ts-456",
 					},
 				},
 			},

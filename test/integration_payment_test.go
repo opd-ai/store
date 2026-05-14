@@ -788,7 +788,7 @@ func (h *testPrintOnDemandHandler) Metadata() handler.HandlerMetadata {
 
 func (h *testPrintOnDemandHandler) Validate(config models.JSONMap) error {
 	provider, ok := config["provider"].(string)
-	if !ok || (provider != "printful" && provider != "redbubble" && provider != "teespring") {
+	if !ok || provider != "printful" {
 		return fmt.Errorf("invalid provider")
 	}
 	if _, ok := config["product_id"].(string); !ok {

@@ -234,7 +234,7 @@ opd-ai/store includes four handler types, configured per-item via `backend_type`
 |---------|---------|
 | **digital_media** | Immediate downloads with expiration and rate limiting |
 | **shipping_form** | Collect customer address for physical goods fulfillment |
-| **pod** | Print-on-demand integration (Printful, Redbubble) |
+| **pod** | Print-on-demand integration (Printful) |
 | **custom** | External API webhooks for custom fulfillment workflows |
 
 ## Creating Custom Handlers

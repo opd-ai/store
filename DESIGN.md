@@ -278,7 +278,7 @@ func (r *HandlerRegistry) All() map[string]HandlerMetadata
 
 ### 4.3 PrintOnDemand Handler
 
-**Purpose**: Delegate to external PoD service (Printful, Redbubble, etc.) and return order tracking.
+**Purpose**: Delegate to external PoD service (Printful) and return order tracking.
 
 **Use Case**: User C purchases a custom printed item; system creates order with PoD vendor and returns tracking.
 

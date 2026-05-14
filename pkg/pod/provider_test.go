@@ -24,26 +24,6 @@ func TestNewProvider(t *testing.T) {
 			},
 		},
 		{
-			name:         "create redbubble provider",
-			providerName: "redbubble",
-			apiKey:       "test_key",
-			wantErr:      false,
-			checkType: func(p Provider) bool {
-				_, ok := p.(*RedbubbleProvider)
-				return ok
-			},
-		},
-		{
-			name:         "create teespring provider",
-			providerName: "teespring",
-			apiKey:       "test_key",
-			wantErr:      false,
-			checkType: func(p Provider) bool {
-				_, ok := p.(*TeespringProvider)
-				return ok
-			},
-		},
-		{
 			name:         "unsupported provider",
 			providerName: "unknown",
 			apiKey:       "test_key",
@@ -92,19 +72,5 @@ func TestPrintfulProvider_Name(t *testing.T) {
 	provider := NewPrintfulProvider("test_key")
 	if provider.Name() != "printful" {
 		t.Errorf("PrintfulProvider.Name() = %v, want 'printful'", provider.Name())
-	}
-}
-
-func TestRedbubbleProvider_Name(t *testing.T) {
-	provider := NewRedbubbleProvider("test_key")
-	if provider.Name() != "redbubble" {
-		t.Errorf("RedbubbleProvider.Name() = %v, want 'redbubble'", provider.Name())
-	}
-}
-
-func TestTeespringProvider_Name(t *testing.T) {
-	provider := NewTeespringProvider("test_key")
-	if provider.Name() != "teespring" {
-		t.Errorf("TeespringProvider.Name() = %v, want 'teespring'", provider.Name())
 	}
 }
