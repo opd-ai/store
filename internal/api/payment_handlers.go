@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -266,4 +267,109 @@ func (h *Handler) checkDownloadLimits(ctx context.Context, paymentID string, con
 	}
 
 	return nil
+}
+
+// ServeDownload serves the actual file for download.
+func (h *Handler) ServeDownload(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	paymentID := vars["payment_id"]
+
+	// Get payment and item
+	payment, item, err := h.getPaymentWithItem(r.Context(), paymentID)
+	if err != nil {
+		sendError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	// Validate download eligibility
+	if err := h.validateDownloadEligibility(payment); err != nil {
+		sendError(w, err.(*downloadError).statusCode, err.Error())
+		return
+	}
+
+	// Check download limits
+	if err := h.checkDownloadLimits(r.Context(), paymentID, item.BackendConfig); err != nil {
+		sendError(w, err.(*downloadError).statusCode, err.Error())
+		return
+	}
+
+	// Only support digital_media backend for direct downloads
+	if item.BackendType != "digital_media" {
+		sendError(w, http.StatusBadRequest, "Item does not support direct download")
+		return
+	}
+
+	// Get storage configuration
+	config := item.BackendConfig
+	storage := "local"
+	if s, ok := config["storage"].(string); ok {
+		storage = s
+	}
+
+	// For S3, redirect to pre-signed URL
+	if storage == "s3" {
+		downloadURL, ok := payment.FulfillmentResult["download_url"].(string)
+		if !ok || downloadURL == "" {
+			sendError(w, http.StatusInternalServerError, "Download URL not available")
+			return
+		}
+		http.Redirect(w, r, downloadURL, http.StatusTemporaryRedirect)
+		// Record download after redirect
+		_ = h.store.RecordDownload(r.Context(), paymentID, r.RemoteAddr, r.UserAgent())
+		return
+	}
+
+	// For local storage, serve the file
+	filePath, ok := config["file_path"].(string)
+	if !ok || filePath == "" {
+		sendError(w, http.StatusInternalServerError, "File path not configured")
+		return
+	}
+
+	// Resolve relative paths from upload directory
+	uploadsDir := os.Getenv("STORE_UPLOADS_DIR")
+	if uploadsDir == "" {
+		uploadsDir = "./data/uploads"
+	}
+
+	// If filePath is not absolute, use uploads directory
+	if !filepath.IsAbs(filePath) {
+		filePath = filepath.Join(uploadsDir, filePath)
+	}
+
+	// Check if file exists
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			sendError(w, http.StatusNotFound, "File not found")
+		} else {
+			sendError(w, http.StatusInternalServerError, "Failed to access file")
+		}
+		return
+	}
+
+	// Open file
+	file, err := os.Open(filePath)
+	if err != nil {
+		sendError(w, http.StatusInternalServerError, "Failed to open file")
+		return
+	}
+	defer file.Close()
+
+	// Record download before serving
+	if err := h.store.RecordDownload(r.Context(), paymentID, r.RemoteAddr, r.UserAgent()); err != nil {
+		log.Printf("Failed to record download: %v", err)
+		// Continue with download even if recording fails
+	}
+
+	// Set headers for file download
+	filename := filepath.Base(filePath)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
+
+	// Stream file to client
+	if _, err := io.Copy(w, file); err != nil {
+		log.Printf("Error streaming file: %v", err)
+	}
 }

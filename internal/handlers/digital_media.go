@@ -44,7 +44,14 @@ func (h *DigitalMediaHandler) Handle(ctx context.Context, payment *models.Paymen
 		return nil, err
 	}
 
-	return buildFulfillmentResult(downloadURL, fileSize, config), nil
+	result := buildFulfillmentResult(downloadURL, fileSize, config)
+
+	// Substitute payment ID in URL template for local storage
+	if _, ok := result["download_url"].(string); ok {
+		result["download_url"] = fmt.Sprintf("/api/download/%s", payment.ID)
+	}
+
+	return result, nil
 }
 
 // validatePaymentConfirmed checks if the payment is confirmed.
@@ -81,7 +88,9 @@ func (h *DigitalMediaHandler) generateLocalDownloadURL(item *models.Item, config
 	if filePath == "" {
 		return "", 0, fmt.Errorf("file_path not configured")
 	}
-	downloadURL := fmt.Sprintf("/api/download/%s", item.ID)
+	// Use payment_id in URL instead of item_id for better security
+	// The actual payment_id will be substituted when fulfillment occurs
+	downloadURL := "/api/download/{payment_id}"
 	return downloadURL, 0, nil
 }
 

@@ -253,7 +253,7 @@ golangci-lint  # (runs in CI, no failures reported)
 - New: `pkg/crypto/encryption.go`
 
 **Tasks**:
-- [ ] Create encryption service using AES-256-GCM with AEAD
+- [x] Create encryption service using AES-256-GCM with AEAD
 - [ ] Add `STORE_ENCRYPTION_KEY` environment variable (32-byte base64)
 - [ ] Encrypt `backend_config` JSON before `db.Put()` in `CreateItem()` and `UpdateItem()`
 - [ ] Decrypt on `db.Get()` in `GetItem()` and `ListItems()`
@@ -280,12 +280,12 @@ golangci-lint  # (runs in CI, no failures reported)
 - `cmd/store/main.go`
 
 **Tasks**:
-- [ ] Implement token bucket rate limiter (e.g., `golang.org/x/time/rate`)
-- [ ] Add `RateLimitMiddleware(limit int, burst int)` to middleware.go
-- [ ] Apply to `/api/checkout` endpoint: 5 requests/minute per IP
-- [ ] Return 429 Too Many Requests with `Retry-After` header
-- [ ] Add `STORE_RATE_LIMIT_ENABLED` env var (default: true)
-- [ ] Add test with 10 rapid requests, verify 5 succeed + 5 rejected
+- [x] Implement token bucket rate limiter (e.g., `golang.org/x/time/rate`)
+- [x] Add `RateLimitMiddleware(limit int, burst int)` to middleware.go
+- [x] Apply to `/api/checkout` endpoint: 5 requests/minute per IP
+- [x] Return 429 Too Many Requests with `Retry-After` header
+- [x] Add `STORE_RATE_LIMIT_ENABLED` env var (default: true)
+- [x] Add test with 10 rapid requests, verify 5 succeed + 5 rejected
 - [ ] Document rate limits in API docs
 
 **Acceptance Criteria**:
@@ -312,13 +312,13 @@ golangci-lint  # (runs in CI, no failures reported)
 - `cmd/store/main.go`
 
 **Tasks**:
-- [ ] Create `GET /api/download/{payment_id}` handler
-- [ ] Verify payment status = "fulfilled" and fulfillment result contains `download_url`
-- [ ] Call `store.RecordDownload()` to track access
-- [ ] Check download limits with `store.CheckDownloadLimit()`
-- [ ] Return 403 if limit exceeded or link expired
-- [ ] Serve file from `STORE_UPLOADS_DIR` or generate S3 redirect
-- [ ] Set `Content-Disposition: attachment; filename=...` header
+- [x] Create `GET /api/download/{payment_id}` handler
+- [x] Verify payment status = "fulfilled" and fulfillment result contains `download_url`
+- [x] Call `store.RecordDownload()` to track access
+- [x] Check download limits with `store.CheckDownloadLimit()`
+- [x] Return 403 if limit exceeded or link expired
+- [x] Serve file from `STORE_UPLOADS_DIR` or generate S3 redirect
+- [x] Set `Content-Disposition: attachment; filename=...` header
 - [ ] Add test cases: valid download, expired link, limit exceeded, wrong payment_id
 - [ ] Update README example flow to show download URL usage
 
@@ -340,11 +340,11 @@ golangci-lint  # (runs in CI, no failures reported)
 - `internal/handlers/digital_media.go` (line 63: `generateS3URLWithSize()`)
 
 **Tasks**:
-- [ ] Initialize AWS session with credentials from env (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) or IAM role
-- [ ] Add region configuration: `STORE_S3_REGION` (default from `backend_config.s3_region`)
-- [ ] Implement S3 `GetObject` pre-signed URL generation with expiration
-- [ ] Use `s3.HeadObject()` to fetch file size for `file_size_mb` result field
-- [ ] Handle AWS errors gracefully (bucket not found, invalid credentials, no permissions)
+- [x] Initialize AWS session with credentials from env (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) or IAM role
+- [x] Add region configuration: `STORE_S3_REGION` (default from `backend_config.s3_region`)
+- [x] Implement S3 `GetObject` pre-signed URL generation with expiration
+- [x] Use `s3.HeadObject()` to fetch file size for `file_size_mb` result field
+- [x] Handle AWS errors gracefully (bucket not found, invalid credentials, no permissions)
 - [ ] Add integration test with MinIO (local S3-compatible storage)
 - [ ] Document S3 setup in README (IAM policy requirements)
 

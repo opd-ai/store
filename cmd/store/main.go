@@ -99,14 +99,24 @@ func initializeServices(boltDB *bolt.DB) *api.Handler {
 func setupRouter(apiHandler *api.Handler) *mux.Router {
 	router := mux.NewRouter()
 
+	// Get rate limit configuration
+	rateLimitRequests, rateLimitBurst := api.GetRateLimitConfig()
+
 	// Public endpoints
 	router.HandleFunc("/health", api.HealthHandler).Methods("GET")
 	router.HandleFunc("/api/catalog", apiHandler.GetCatalog).Methods("GET")
 	router.HandleFunc("/api/items/{id}", apiHandler.GetItem).Methods("GET")
-	router.HandleFunc("/api/checkout", apiHandler.CreateCheckout).Methods("POST")
+
+	// Checkout endpoint with rate limiting
+	checkoutHandler := api.RateLimitMiddleware(rateLimitRequests, rateLimitBurst)(http.HandlerFunc(apiHandler.CreateCheckout))
+	router.Handle("/api/checkout", checkoutHandler).Methods("POST")
+
 	router.HandleFunc("/api/payment/{id}/status", apiHandler.GetPaymentStatus).Methods("GET")
 	router.HandleFunc("/api/payment/{id}/submit-form", apiHandler.SubmitPaymentForm).Methods("POST")
 	router.HandleFunc("/api/payment/{id}/download", apiHandler.TrackDownload).Methods("POST")
+
+	// File download endpoint
+	router.HandleFunc("/api/download/{payment_id}", apiHandler.ServeDownload).Methods("GET")
 
 	// Webhook endpoints
 	router.HandleFunc("/webhook/payment-confirmed", apiHandler.WebhookPaymentConfirmed).Methods("POST")
