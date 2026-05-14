@@ -319,8 +319,8 @@ golangci-lint  # (runs in CI, no failures reported)
 - [x] Return 403 if limit exceeded or link expired
 - [x] Serve file from `STORE_UPLOADS_DIR` or generate S3 redirect
 - [x] Set `Content-Disposition: attachment; filename=...` header
-- [ ] Add test cases: valid download, expired link, limit exceeded, wrong payment_id
-- [ ] Update README example flow to show download URL usage
+- [x] Add test cases: valid download, expired link, limit exceeded, wrong payment_id
+- [x] Update README example flow to show download URL usage
 
 **Acceptance Criteria**:
 - ✅ `/api/download/{payment_id}` serves files for fulfilled payments
@@ -346,7 +346,7 @@ golangci-lint  # (runs in CI, no failures reported)
 - [x] Use `s3.HeadObject()` to fetch file size for `file_size_mb` result field
 - [x] Handle AWS errors gracefully (bucket not found, invalid credentials, no permissions)
 - [ ] Add integration test with MinIO (local S3-compatible storage)
-- [ ] Document S3 setup in README (IAM policy requirements)
+- [x] Document S3 setup in README (IAM policy requirements)
 
 **Acceptance Criteria**:
 - ✅ `storage: s3` config generates working pre-signed URLs
@@ -375,7 +375,7 @@ golangci-lint  # (runs in CI, no failures reported)
   - [x] Record 5 downloads, verify count = 5
   - [x] Set limit=3, attempt 4th download, verify rejection
   - [x] Test IP tracking (same payment, different IPs)
-- [ ] Update README to document download limits feature
+- [x] Update README to document download limits feature
 
 **Acceptance Criteria**:
 - ✅ Each download recorded with timestamp, IP, user-agent

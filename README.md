@@ -219,10 +219,45 @@ After payment is confirmed, status becomes `"confirmed"`, and after fulfillment:
   "amount": "0.001",
   "currency": "BTC",
   "fulfillment_result": {
-    "download_url": "http://localhost:8080/download/abc123token",
-    "expires_at": "2026-05-14T16:05:00Z"
+    "download_url": "/api/download/pay_def456",
+    "expires_at": "2026-05-14T16:05:00Z",
+    "max_downloads": 10
   },
   "fulfilled_at": "2026-05-13T16:10:00Z"
+}
+```
+
+### Download Digital Content
+Once payment is fulfilled, use the `download_url` from the fulfillment result to download the file:
+
+```bash
+curl -o go-programming.pdf http://localhost:8080/api/download/pay_def456
+```
+
+**Response:** The file is served with appropriate headers for download:
+- `Content-Disposition: attachment; filename="go-programming.pdf"`
+- `Content-Type: application/octet-stream`
+- `Content-Length: <file_size>`
+
+**Download tracking and limits:**
+- Each download is recorded with timestamp, IP address, and user agent
+- If `max_downloads` is configured, the endpoint returns `429 Too Many Requests` when the limit is exceeded
+- Expired links return `410 Gone` with an error message
+- Only fulfilled payments can be downloaded; unfulfilled payments return `403 Forbidden`
+
+**Example error responses:**
+
+Download limit exceeded:
+```json
+{
+  "error": "Download limit exceeded"
+}
+```
+
+Expired link:
+```json
+{
+  "error": "Download link has expired"
 }
 ```
 
@@ -236,6 +271,99 @@ opd-ai/store includes four handler types, configured per-item via `backend_type`
 | **shipping_form** | Collect customer address for physical goods fulfillment |
 | **pod** | Print-on-demand integration (Printful) |
 | **custom** | External API webhooks for custom fulfillment workflows |
+
+### S3 Storage Configuration
+
+The `digital_media` handler supports Amazon S3 for file storage with pre-signed URLs. To enable S3 storage:
+
+#### 1. Configure AWS Credentials
+
+Set environment variables for AWS access:
+```bash
+export AWS_ACCESS_KEY_ID=your_access_key
+export AWS_SECRET_ACCESS_KEY=your_secret_key
+export AWS_REGION=us-east-1
+```
+
+Or use IAM instance roles when running on EC2/ECS (recommended for production).
+
+#### 2. Create S3 Bucket
+
+```bash
+aws s3 mb s3://your-store-downloads --region us-east-1
+```
+
+#### 3. Set IAM Policy
+
+Attach the following policy to your IAM user/role:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:HeadObject"
+      ],
+      "Resource": "arn:aws:s3:::your-store-downloads/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::your-store-downloads"
+    }
+  ]
+}
+```
+
+**Minimalpermissions:** The store only needs `s3:GetObject` and `s3:HeadObject` for serving downloads. Upload files separately using AWS CLI, S3 console, or a separate upload process.
+
+#### 4. Configure Item with S3 Storage
+
+```bash
+curl -X POST http://localhost:8080/admin/items \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: your-secret-token" \
+  -d '{
+    "name": "Advanced Go Course",
+    "price": "0.005",
+    "currency": "BTC",
+    "category_id": "cat_abc123",
+    "backend_type": "digital_media",
+    "backend_config": {
+      "storage": "s3",
+      "s3_bucket": "your-store-downloads",
+      "s3_key": "courses/advanced-go.zip",
+      "s3_region": "us-east-1",
+      "expiration_hours": 48,
+      "max_downloads": 5
+    }
+  }'
+```
+
+**Configuration fields:**
+- `storage`: Must be `"s3"`
+- `s3_bucket`: Your S3 bucket name
+- `s3_key`: Object key (path) within the bucket
+- `s3_region`: AWS region (e.g., `us-east-1`, `eu-west-1`)
+- `expiration_hours`: How long pre-signed URLs remain valid (minimum: 1, maximum: 168)
+- `max_downloads`: Optional download limit per payment
+
+**S3 download flow:**
+1. Customer completes payment
+2. Store fulfills payment by generating pre-signed S3 URL (valid for configured hours)
+3. Download endpoint (`/api/download/{payment_id}`) redirects to pre-signed URL
+4. Customer downloads directly from S3 (store doesn't proxy the file)
+5. Download is tracked; limit enforced if configured
+
+**Troubleshooting:**
+- "Access Denied" errors: Check IAM permissions and bucket policy
+- "Bucket not found": Verify region matches `s3_region` in config
+- "Invalid credentials": Ensure `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are set
 
 ## Creating Custom Handlers
 

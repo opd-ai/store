@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/mux"
 	bolt "go.etcd.io/bbolt"
 
+	"github.com/opd-ai/store/internal/handlers"
 	"github.com/opd-ai/store/pkg/db"
 	"github.com/opd-ai/store/pkg/handler"
 	"github.com/opd-ai/store/pkg/models"
@@ -122,6 +123,33 @@ func setupTestHandler(t *testing.T) (*Handler, *store.Store) {
 	h := NewHandler(s, paywallClient)
 
 	return h, s
+}
+
+// setupTestHandlerWithRealHandlers creates a handler with real fulfillment handlers registered
+func setupTestHandlerWithRealHandlers(t *testing.T) (*Handler, *store.Store, db.Database) {
+	boltDB := setupTestDB(t)
+
+	reg := handler.NewRegistry()
+	// Register real handlers including digital_media
+	realHandlers := []handler.FulfillmentHandler{
+		&mockHandler{},                    // Keep mock for compatibility
+		handlers.NewDigitalMediaHandler(), // Register digital_media for download tests
+		handlers.NewShippingFormHandler(), // Register shipping_form for tests
+	}
+
+	for _, h := range realHandlers {
+		if err := reg.Register(h); err != nil {
+			t.Fatalf("failed to register handler: %v", err)
+		}
+	}
+
+	database := db.NewBoltDatabase(boltDB)
+	s := store.NewStore(database, reg)
+
+	paywallClient := paywall.NewClient("http://test-paywall", "test-api-key")
+	h := NewHandler(s, paywallClient)
+
+	return h, s, database
 }
 
 // TestHealthHandler tests the health check endpoint
@@ -1986,5 +2014,450 @@ func TestGetRateLimitConfig(t *testing.T) {
 	}
 	if burst != 3 {
 		t.Errorf("expected custom burst 3, got %d", burst)
+	}
+}
+
+// TestServeDownload_ValidLocalFile tests successful file download from local storage
+func TestServeDownload_ValidLocalFile(t *testing.T) {
+	h, s, _ := setupTestHandlerWithRealHandlers(t)
+
+	// Create test file
+	uploadsDir := "/tmp/test_uploads_" + t.Name()
+	os.MkdirAll(uploadsDir, 0755)
+	t.Cleanup(func() { os.RemoveAll(uploadsDir) })
+
+	testFilePath := uploadsDir + "/test-file.txt"
+	testContent := []byte("test content for download")
+	if err := os.WriteFile(testFilePath, testContent, 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	// Set uploads directory
+	os.Setenv("STORE_UPLOADS_DIR", uploadsDir)
+	defer os.Unsetenv("STORE_UPLOADS_DIR")
+
+	// Create category and item
+	cat, _ := s.CreateCategory(context.Background(), "Digital", "Digital products")
+	item := models.NewItem(cat.ID, "Test File", "Test file download", "100", "BTC", "digital_media")
+	item.BackendConfig = models.JSONMap{
+		"storage":          "local",
+		"file_path":        "test-file.txt",
+		"expiration_hours": float64(24),
+	}
+	item, _ = s.CreateItem(context.Background(), item)
+
+	// Create and fulfill payment
+	payment, _ := s.CreatePayment(context.Background(), item.ID, "100", "BTC")
+	s.ConfirmPayment(context.Background(), payment.ID, "txhash123")
+	s.FulfillPayment(context.Background(), payment.ID)
+
+	// Make download request
+	req := httptest.NewRequest(http.MethodGet, "/api/download/"+payment.ID, nil)
+	req = mux.SetURLVars(req, map[string]string{"payment_id": payment.ID})
+	w := httptest.NewRecorder()
+
+	h.ServeDownload(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+
+	// Verify file content
+	if got := w.Body.Bytes(); !bytes.Equal(got, testContent) {
+		t.Errorf("expected content %q, got %q", testContent, got)
+	}
+
+	// Verify headers
+	if contentDisp := w.Header().Get("Content-Disposition"); contentDisp == "" {
+		t.Error("expected Content-Disposition header to be set")
+	}
+}
+
+// TestServeDownload_S3Redirect tests S3 redirect for fulfilled payment
+func TestServeDownload_S3Redirect(t *testing.T) {
+	h, s, database := setupTestHandlerWithRealHandlers(t)
+
+	// Create category and item with S3 storage
+	cat, err := s.CreateCategory(context.Background(), "Digital", "Digital products")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
+	item := models.NewItem(cat.ID, "Test S3 File", "S3 file download", "100", "BTC", "digital_media")
+	item.BackendConfig = models.JSONMap{
+		"storage":          "s3",
+		"s3_bucket":        "test-bucket",
+		"s3_key":           "files/test.pdf",
+		"s3_region":        "us-east-1",
+		"expiration_hours": float64(24),
+	}
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
+
+	// Create, confirm payment, then manually set fulfilled status with S3 URL
+	payment, err := s.CreatePayment(context.Background(), item.ID, "100", "BTC")
+	if err != nil {
+		t.Fatalf("failed to create payment: %v", err)
+	}
+	if err := s.ConfirmPayment(context.Background(), payment.ID, "txhash123"); err != nil {
+		t.Fatalf("failed to confirm payment: %v", err)
+	}
+
+	// Manually update payment to fulfilled status with S3 URL (bypass FulfillPayment to avoid AWS calls)
+	now := time.Now()
+	payment.Status = "fulfilled"
+	payment.FulfilledAt = &now
+	payment.FulfillmentResult = models.JSONMap{
+		"download_url": "https://test-bucket.s3.amazonaws.com/files/test.pdf?X-Amz-Signature=test",
+		"storage":      "s3",
+	}
+
+	// Update via database directly
+	if err := database.Update(func(tx db.Transaction) error {
+		return tx.GetBucket(db.BucketPayments).Put(payment.ID, payment)
+	}); err != nil {
+		t.Fatalf("failed to update payment status: %v", err)
+	}
+
+	// Make download request
+	req := httptest.NewRequest(http.MethodGet, "/api/download/"+payment.ID, nil)
+	req = mux.SetURLVars(req, map[string]string{"payment_id": payment.ID})
+	w := httptest.NewRecorder()
+
+	h.ServeDownload(w, req)
+
+	// Should redirect to S3
+	if w.Code != http.StatusTemporaryRedirect {
+		t.Errorf("expected status %d, got %d: %s", http.StatusTemporaryRedirect, w.Code, w.Body.String())
+	}
+
+	location := w.Header().Get("Location")
+	if location == "" {
+		t.Error("expected Location header for redirect")
+	}
+}
+
+// TestServeDownload_ExpiredLink tests download with expired link
+func TestServeDownload_ExpiredLink(t *testing.T) {
+	h, s, _ := setupTestHandlerWithRealHandlers(t)
+
+	// Create category and item
+	cat, err := s.CreateCategory(context.Background(), "Digital", "Digital products")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
+	item := models.NewItem(cat.ID, "Test File", "Test file", "100", "BTC", "digital_media")
+	item.BackendConfig = models.JSONMap{
+		"storage":          "local",
+		"file_path":        "test.txt",
+		"expiration_hours": float64(24),
+	}
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
+
+	// Create and fulfill payment
+	payment, err := s.CreatePayment(context.Background(), item.ID, "100", "BTC")
+	if err != nil {
+		t.Fatalf("failed to create payment: %v", err)
+	}
+	if err := s.ConfirmPayment(context.Background(), payment.ID, "txhash123"); err != nil {
+		t.Fatalf("failed to confirm payment: %v", err)
+	}
+	if err := s.FulfillPayment(context.Background(), payment.ID); err != nil {
+		t.Fatalf("failed to fulfill payment: %v", err)
+	}
+
+	// Set fulfillment result with expired timestamp
+	if err := s.UpdateFulfillmentResult(context.Background(), payment.ID, models.JSONMap{
+		"expires_at": time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("failed to update fulfillment result: %v", err)
+	}
+
+	// Make download request
+	req := httptest.NewRequest(http.MethodGet, "/api/download/"+payment.ID, nil)
+	req = mux.SetURLVars(req, map[string]string{"payment_id": payment.ID})
+	w := httptest.NewRecorder()
+
+	h.ServeDownload(w, req)
+
+	if w.Code != http.StatusGone {
+		t.Errorf("expected status %d, got %d: %s", http.StatusGone, w.Code, w.Body.String())
+	}
+
+	var response map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&response)
+	if err, ok := response["error"].(string); !ok || err == "" {
+		t.Error("expected error message for expired link")
+	}
+}
+
+// TestServeDownload_LimitExceeded tests download limit exceeded
+func TestServeDownload_LimitExceeded(t *testing.T) {
+	h, s, _ := setupTestHandlerWithRealHandlers(t)
+
+	// Create test file
+	uploadsDir := "/tmp/test_uploads_limit_" + t.Name()
+	os.MkdirAll(uploadsDir, 0755)
+	t.Cleanup(func() { os.RemoveAll(uploadsDir) })
+
+	testFilePath := uploadsDir + "/test-limit.txt"
+	if err := os.WriteFile(testFilePath, []byte("content"), 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	os.Setenv("STORE_UPLOADS_DIR", uploadsDir)
+	defer os.Unsetenv("STORE_UPLOADS_DIR")
+
+	// Create category and item with max_downloads limit
+	cat, err := s.CreateCategory(context.Background(), "Digital", "Digital products")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
+	item := models.NewItem(cat.ID, "Limited File", "Limited downloads", "100", "BTC", "digital_media")
+	item.BackendConfig = models.JSONMap{
+		"storage":          "local",
+		"file_path":        "test-limit.txt",
+		"max_downloads":    float64(2),
+		"expiration_hours": float64(24),
+	}
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
+
+	// Create and fulfill payment
+	payment, err := s.CreatePayment(context.Background(), item.ID, "100", "BTC")
+	if err != nil {
+		t.Fatalf("failed to create payment: %v", err)
+	}
+	if err := s.ConfirmPayment(context.Background(), payment.ID, "txhash123"); err != nil {
+		t.Fatalf("failed to confirm payment: %v", err)
+	}
+	if err := s.FulfillPayment(context.Background(), payment.ID); err != nil {
+		t.Fatalf("failed to fulfill payment: %v", err)
+	}
+
+	// Download twice (at limit)
+	for i := 0; i < 2; i++ {
+		s.RecordDownload(context.Background(), payment.ID, "127.0.0.1", "test-agent")
+	}
+
+	// Attempt third download (should fail)
+	req := httptest.NewRequest(http.MethodGet, "/api/download/"+payment.ID, nil)
+	req = mux.SetURLVars(req, map[string]string{"payment_id": payment.ID})
+	w := httptest.NewRecorder()
+
+	h.ServeDownload(w, req)
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Errorf("expected status %d, got %d", http.StatusTooManyRequests, w.Code)
+	}
+}
+
+// TestServeDownload_WrongPaymentID tests download with invalid payment ID
+func TestServeDownload_WrongPaymentID(t *testing.T) {
+	h, _, _ := setupTestHandlerWithRealHandlers(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/download/nonexistent", nil)
+	req = mux.SetURLVars(req, map[string]string{"payment_id": "nonexistent"})
+	w := httptest.NewRecorder()
+
+	h.ServeDownload(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status %d, got %d", http.StatusNotFound, w.Code)
+	}
+}
+
+// TestServeDownload_PaymentNotFulfilled tests download for unfulfilled payment
+func TestServeDownload_PaymentNotFulfilled(t *testing.T) {
+	h, s, _ := setupTestHandlerWithRealHandlers(t)
+
+	// Create category and item
+	cat, err := s.CreateCategory(context.Background(), "Digital", "Digital products")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
+	item := models.NewItem(cat.ID, "Test File", "Test file", "100", "BTC", "digital_media")
+	item.BackendConfig = models.JSONMap{
+		"storage":          "local",
+		"file_path":        "test.txt",
+		"expiration_hours": float64(24),
+	}
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
+
+	// Create payment but don't fulfill
+	payment, err := s.CreatePayment(context.Background(), item.ID, "100", "BTC")
+	if err != nil {
+		t.Fatalf("failed to create payment: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/download/"+payment.ID, nil)
+	req = mux.SetURLVars(req, map[string]string{"payment_id": payment.ID})
+	w := httptest.NewRecorder()
+
+	h.ServeDownload(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected status %d, got %d", http.StatusForbidden, w.Code)
+	}
+}
+
+// TestServeDownload_FileNotFound tests download when file doesn't exist
+func TestServeDownload_FileNotFound(t *testing.T) {
+	h, s, _ := setupTestHandlerWithRealHandlers(t)
+
+	uploadsDir := "/tmp/test_uploads_notfound_" + t.Name()
+	os.MkdirAll(uploadsDir, 0755)
+	t.Cleanup(func() { os.RemoveAll(uploadsDir) })
+
+	os.Setenv("STORE_UPLOADS_DIR", uploadsDir)
+	defer os.Unsetenv("STORE_UPLOADS_DIR")
+
+	// Create category and item pointing to non-existent file
+	cat, err := s.CreateCategory(context.Background(), "Digital", "Digital products")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
+	item := models.NewItem(cat.ID, "Missing File", "File doesn't exist", "100", "BTC", "digital_media")
+	item.BackendConfig = models.JSONMap{
+		"storage":          "local",
+		"file_path":        "nonexistent-file.txt",
+		"expiration_hours": float64(24),
+	}
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
+
+	// Create and fulfill payment
+	payment, err := s.CreatePayment(context.Background(), item.ID, "100", "BTC")
+	if err != nil {
+		t.Fatalf("failed to create payment: %v", err)
+	}
+	if err := s.ConfirmPayment(context.Background(), payment.ID, "txhash123"); err != nil {
+		t.Fatalf("failed to confirm payment: %v", err)
+	}
+	if err := s.FulfillPayment(context.Background(), payment.ID); err != nil {
+		t.Fatalf("failed to fulfill payment: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/download/"+payment.ID, nil)
+	req = mux.SetURLVars(req, map[string]string{"payment_id": payment.ID})
+	w := httptest.NewRecorder()
+
+	h.ServeDownload(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status %d, got %d", http.StatusNotFound, w.Code)
+	}
+}
+
+// TestServeDownload_NonDigitalMediaItem tests download for non-digital_media item
+func TestServeDownload_NonDigitalMediaItem(t *testing.T) {
+	h, s, _ := setupTestHandlerWithRealHandlers(t)
+
+	// Create category and item with different backend type
+	cat, err := s.CreateCategory(context.Background(), "Physical", "Physical products")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
+	item := models.NewItem(cat.ID, "T-Shirt", "Physical t-shirt", "2000", "BTC", "shipping_form")
+	item.BackendConfig = models.JSONMap{
+		"form_fields": []interface{}{
+			map[string]interface{}{
+				"name":     "address",
+				"label":    "Shipping Address",
+				"type":     "text",
+				"required": true,
+			},
+		},
+	}
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		t.Fatalf("failed to create item: %v", err)
+	}
+
+	// Create and fulfill payment
+	payment, err := s.CreatePayment(context.Background(), item.ID, "2000", "BTC")
+	if err != nil {
+		t.Fatalf("failed to create payment: %v", err)
+	}
+	if err := s.ConfirmPayment(context.Background(), payment.ID, "txhash123"); err != nil {
+		t.Fatalf("failed to confirm payment: %v", err)
+	}
+	if err := s.FulfillPayment(context.Background(), payment.ID); err != nil {
+		t.Fatalf("failed to fulfill payment: %v", err)
+	}
+	s.FulfillPayment(context.Background(), payment.ID)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/download/"+payment.ID, nil)
+	req = mux.SetURLVars(req, map[string]string{"payment_id": payment.ID})
+	w := httptest.NewRecorder()
+
+	h.ServeDownload(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+// TestServeDownload_MissingFilePath tests download when file_path is not configured
+func TestServeDownload_MissingFilePath(t *testing.T) {
+	h, s, _ := setupTestHandlerWithRealHandlers(t)
+
+	// Create category and item without file_path
+	cat, err := s.CreateCategory(context.Background(), "Digital", "Digital products")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
+	item := models.NewItem(cat.ID, "Broken Config", "Missing file_path", "100", "BTC", "digital_media")
+	item.BackendConfig = models.JSONMap{
+		"storage":          "local",
+		"expiration_hours": float64(24),
+		// Missing file_path - this should cause validation error or fulfillment error
+	}
+	item, err = s.CreateItem(context.Background(), item)
+	if err != nil {
+		// Item creation failed due to validation - this is expected
+		// The test is intended to verify ServeDownload behavior with invalid config,
+		// but validation prevents such items from being created
+		t.Skipf("CreateItem correctly rejected invalid config (missing file_path): %v", err)
+		return
+	}
+
+	// Create and fulfill payment - this may fail if validation catches missing file_path
+	payment, err := s.CreatePayment(context.Background(), item.ID, "100", "BTC")
+	if err != nil {
+		t.Fatalf("failed to create payment: %v", err)
+	}
+	if err := s.ConfirmPayment(context.Background(), payment.ID, "txhash123"); err != nil {
+		t.Fatalf("failed to confirm payment: %v", err)
+	}
+
+	// FulfillPayment will likely fail due to missing file_path
+	// If it succeeds somehow, ServeDownload should still catch it
+	err = s.FulfillPayment(context.Background(), payment.ID)
+	if err != nil {
+		// If fulfillment failed as expected, skip the rest of the test
+		t.Skipf("FulfillPayment correctly rejected invalid config: %v", err)
+		return
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/download/"+payment.ID, nil)
+	req = mux.SetURLVars(req, map[string]string{"payment_id": payment.ID})
+	w := httptest.NewRecorder()
+
+	h.ServeDownload(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
 	}
 }
