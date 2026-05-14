@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/opd-ai/store/pkg/crypto"
 	"github.com/opd-ai/store/pkg/db"
 	"github.com/opd-ai/store/pkg/handler"
 	"github.com/opd-ai/store/pkg/models"
@@ -65,8 +67,9 @@ type Service interface {
 // Store orchestrates the payment-to-fulfillment workflow.
 // It manages payment creation, confirmation, and handler dispatch.
 type Store struct {
-	database db.Database
-	registry handler.HandlerRegistry
+	database   db.Database
+	registry   handler.HandlerRegistry
+	encryption *crypto.EncryptionService // Optional encryption for sensitive config data
 }
 
 // Verify that Store implements Service at compile time.
@@ -75,9 +78,15 @@ var _ Service = (*Store)(nil)
 // NewStore creates a new Store instance.
 func NewStore(database db.Database, registry handler.HandlerRegistry) *Store {
 	return &Store{
-		database: database,
-		registry: registry,
+		database:   database,
+		registry:   registry,
+		encryption: nil, // Encryption disabled by default
 	}
+}
+
+// SetEncryption sets the encryption service for encrypting sensitive configuration data.
+func (s *Store) SetEncryption(encryption *crypto.EncryptionService) {
+	s.encryption = encryption
 }
 
 // CreatePayment initializes a new payment record.
@@ -374,6 +383,17 @@ func (s *Store) GetItem(ctx context.Context, itemID string) (*models.Item, error
 		return nil, fmt.Errorf("item not found: %w", err)
 	}
 
+	// Decrypt backend config if encryption is enabled
+	if s.encryption != nil && len(item.BackendConfig) > 0 {
+		decryptedConfig, err := s.decryptBackendConfig(item.BackendConfig)
+		if err != nil {
+			// If decryption fails, assume it's plaintext (backward compatibility)
+			// and return as-is
+			return &item, nil
+		}
+		item.BackendConfig = decryptedConfig
+	}
+
 	return &item, nil
 }
 
@@ -507,14 +527,24 @@ func (s *Store) CreateItem(ctx context.Context, item *models.Item) (*models.Item
 		return nil, fmt.Errorf("invalid backend_config: %w", err)
 	}
 
+	// Encrypt backend config if encryption is enabled
+	itemToStore := *item
+	if s.encryption != nil && len(item.BackendConfig) > 0 {
+		encryptedConfig, err := s.encryptBackendConfig(item.BackendConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encrypt backend_config: %w", err)
+		}
+		itemToStore.BackendConfig = encryptedConfig
+	}
+
 	err = s.database.Update(func(tx db.Transaction) error {
-		if err := tx.GetBucket(db.BucketItems).Put(item.ID, item); err != nil {
+		if err := tx.GetBucket(db.BucketItems).Put(itemToStore.ID, &itemToStore); err != nil {
 			return err
 		}
 
 		// Add category index
-		if item.CategoryID != "" {
-			return tx.GetBucket(db.BucketPayments).AddIndex(db.BucketItemsByCategory, item.CategoryID+":"+item.ID, item.ID)
+		if itemToStore.CategoryID != "" {
+			return tx.GetBucket(db.BucketPayments).AddIndex(db.BucketItemsByCategory, itemToStore.CategoryID+":"+itemToStore.ID, itemToStore.ID)
 		}
 
 		return nil
@@ -562,6 +592,20 @@ func (s *Store) ListItems(ctx context.Context, filters map[string]interface{}) (
 		return nil, fmt.Errorf("failed to list items: %w", err)
 	}
 
+	// Decrypt backend configs if encryption is enabled
+	if s.encryption != nil {
+		for _, item := range items {
+			if len(item.BackendConfig) > 0 {
+				decryptedConfig, err := s.decryptBackendConfig(item.BackendConfig)
+				if err != nil {
+					// If decryption fails, assume it's plaintext (backward compatibility)
+					continue
+				}
+				item.BackendConfig = decryptedConfig
+			}
+		}
+	}
+
 	return items, nil
 }
 
@@ -578,6 +622,15 @@ func (s *Store) UpdateItem(ctx context.Context, id string, updates map[string]in
 			return fmt.Errorf("item not found: %w", err)
 		}
 
+		// Decrypt existing backend config if needed before applying updates
+		if s.encryption != nil && len(item.BackendConfig) > 0 {
+			decryptedConfig, err := s.decryptBackendConfig(item.BackendConfig)
+			if err == nil {
+				item.BackendConfig = decryptedConfig
+			}
+			// If decryption fails, continue with existing config (backward compatibility)
+		}
+
 		// Apply updates using helper functions
 		applyBasicFieldUpdates(&item, updates)
 		applyBackendUpdates(&item, updates)
@@ -586,6 +639,15 @@ func (s *Store) UpdateItem(ctx context.Context, id string, updates map[string]in
 		}
 
 		item.UpdatedAt = time.Now()
+
+		// Encrypt backend config if encryption is enabled before storing
+		if s.encryption != nil && len(item.BackendConfig) > 0 {
+			encryptedConfig, err := s.encryptBackendConfig(item.BackendConfig)
+			if err != nil {
+				return fmt.Errorf("failed to encrypt backend_config: %w", err)
+			}
+			item.BackendConfig = encryptedConfig
+		}
 
 		return tx.GetBucket(db.BucketItems).Put(id, &item)
 	})
@@ -872,4 +934,77 @@ func (s *Store) CheckDownloadLimit(ctx context.Context, paymentID string, maxDow
 	}
 
 	return count >= maxDownloads, nil
+}
+
+// encryptBackendConfig encrypts a backend configuration using the encryption service.
+// The config is marshaled to JSON, encrypted, and returned as a JSONMap with an "_encrypted" flag.
+func (s *Store) encryptBackendConfig(config models.JSONMap) (models.JSONMap, error) {
+	if s.encryption == nil {
+		return config, nil
+	}
+
+	// Marshal config to JSON
+	plaintext, err := json.Marshal(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	// Encrypt
+	ciphertext, err := s.encryption.Encrypt(plaintext)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt: %w", err)
+	}
+
+	// Return as JSONMap with encrypted data and flag
+	return models.JSONMap{
+		"_encrypted": true,
+		"_data":      ciphertext,
+	}, nil
+}
+
+// decryptBackendConfig decrypts a backend configuration using the encryption service.
+// If the config contains the "_encrypted" flag, it decrypts the "_data" field.
+// Otherwise, it returns the config as-is (for backward compatibility with plaintext data).
+func (s *Store) decryptBackendConfig(config models.JSONMap) (models.JSONMap, error) {
+	if s.encryption == nil {
+		return config, nil
+	}
+
+	// Check if config is encrypted
+	encrypted, ok := config["_encrypted"].(bool)
+	if !ok || !encrypted {
+		// Not encrypted, return as-is (backward compatibility)
+		return config, nil
+	}
+
+	// Extract encrypted data
+	dataRaw, ok := config["_data"]
+	if !ok {
+		return nil, fmt.Errorf("encrypted config missing _data field")
+	}
+
+	// Convert data to []byte
+	var ciphertext []byte
+	switch v := dataRaw.(type) {
+	case []byte:
+		ciphertext = v
+	case string:
+		ciphertext = []byte(v)
+	default:
+		return nil, fmt.Errorf("invalid encrypted data type: %T", dataRaw)
+	}
+
+	// Decrypt
+	plaintext, err := s.encryption.Decrypt(ciphertext)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt: %w", err)
+	}
+
+	// Unmarshal back to JSONMap
+	var decrypted models.JSONMap
+	if err := json.Unmarshal(plaintext, &decrypted); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal decrypted config: %w", err)
+	}
+
+	return decrypted, nil
 }

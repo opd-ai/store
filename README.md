@@ -79,6 +79,10 @@ STORE_LOG_FORMAT=json
 | `STORE_PUBLIC_URL` | Yes | Public URL of this store (for webhook callbacks) |
 | `STORE_AUTO_FULFILL` | No | Auto-fulfill payments after confirmation (default: true) |
 | `STORE_ADMIN_TOKEN` | Yes | Token for admin API authentication |
+| `STORE_ENCRYPTION_KEY` | No | Base64-encoded 32-byte key for encrypting backend configs (optional) |
+| `STORE_RATE_LIMIT_ENABLED` | No | Enable rate limiting on checkout (default: true) |
+| `STORE_RATE_LIMIT_REQUESTS` | No | Rate limit requests per window (default: 5) |
+| `STORE_RATE_LIMIT_BURST` | No | Rate limit burst allowance (default: 5) |
 | `STORE_LOG_LEVEL` | No | Log level: debug, info, warn, error (default: info) |
 | `STORE_LOG_FORMAT` | No | Log format: json or text (default: json) |
 
@@ -281,6 +285,81 @@ The system provides core models for managing catalog and payments:
 - **FormSubmission** - Stores form data from shipping and custom handlers
 
 All models use JSON encoding for BoltDB storage with automatic bucket initialization on startup.
+
+## Security
+
+### Backend Configuration Encryption
+
+opd-ai/store supports optional encryption of sensitive backend configuration data (API keys, webhooks, credentials) using AES-256-GCM. When enabled, all `backend_config` fields are encrypted at rest in the database.
+
+**Enable encryption:**
+
+1. Generate an encryption key:
+```bash
+make generate-key
+# Or manually:
+go run ./cmd/rotate-key -generate
+```
+
+2. Add the generated key to your environment:
+```bash
+export STORE_ENCRYPTION_KEY=<base64-key>
+```
+
+3. Restart the store service. New items will have encrypted backend configurations.
+
+**Key rotation:**
+
+To rotate encryption keys without downtime:
+
+```bash
+# Using Makefile
+make rotate-key OLD_KEY=<old-key> NEW_KEY=<new-key>
+
+# Or directly
+go run ./cmd/rotate-key -old-key=<old-key> -new-key=<new-key> -db=./data/store.db
+```
+
+The rotation tool:
+- Decrypts all items with the old key
+- Re-encrypts with the new key
+- Updates the database atomically
+- Supports migrating from plaintext to encrypted
+
+**Backward compatibility:**
+
+- Without `STORE_ENCRYPTION_KEY`, configs are stored as plaintext
+- With encryption enabled, the system can read both encrypted and plaintext configs
+- Plaintext configs are automatically encrypted on the next update
+
+**Important:**
+- **Back up your encryption key securely** - lost keys cannot decrypt data
+- Store the key separately from the database (environment, secrets manager, vault)
+- Use different keys for development, staging, and production
+
+### Webhook Security
+
+Payment confirmation webhooks from opd-ai/paywall are verified using HMAC-SHA256 signatures. Configure the webhook secret:
+
+```bash
+export STORE_PAYWALL_WEBHOOK_SECRET=<shared-secret>
+```
+
+Webhooks without valid signatures are rejected with HTTP 401 Unauthorized.
+
+### Rate Limiting
+
+The checkout endpoint is rate-limited to 5 requests per minute per IP address by default. Configure with:
+
+```bash
+export STORE_RATE_LIMIT_REQUESTS=10    # Requests per window
+export STORE_RATE_LIMIT_BURST=5        # Burst allowance
+```
+
+Disable rate limiting (not recommended for production):
+```bash
+export STORE_RATE_LIMIT_ENABLED=false
+```
 
 ## Testing
 

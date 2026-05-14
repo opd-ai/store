@@ -16,6 +16,7 @@ import (
 
 	"github.com/opd-ai/store/internal/api"
 	"github.com/opd-ai/store/internal/handlers"
+	"github.com/opd-ai/store/pkg/crypto"
 	"github.com/opd-ai/store/pkg/db"
 	"github.com/opd-ai/store/pkg/handler"
 	"github.com/opd-ai/store/pkg/paywall"
@@ -80,6 +81,19 @@ func initializeServices(boltDB *bolt.DB) *api.Handler {
 
 	// Initialize store service
 	storeService := store.NewStore(database, registry)
+
+	// Initialize encryption service if encryption key is configured
+	encryptionKey := os.Getenv("STORE_ENCRYPTION_KEY")
+	if encryptionKey != "" {
+		encryption, err := crypto.NewEncryptionServiceFromBase64(encryptionKey)
+		if err != nil {
+			log.Fatalf("Failed to initialize encryption service: %v", err)
+		}
+		storeService.SetEncryption(encryption)
+		log.Println("Encryption enabled for backend configurations")
+	} else {
+		log.Println("Warning: STORE_ENCRYPTION_KEY not set, backend configurations will not be encrypted")
+	}
 
 	// Initialize paywall client
 	paywallURL := os.Getenv("STORE_PAYWALL_URL")

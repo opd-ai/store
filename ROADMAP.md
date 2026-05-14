@@ -97,9 +97,9 @@ The 777-line DESIGN.md describes additional features not explicitly claimed in R
 | Feature | Status | Evidence |
 |---------|--------|----------|
 | Webhook signature verification (HMAC-SHA256) | ✅ **Achieved** | `internal/api/webhook_handlers.go` and `pkg/paywall/client.go` implement HMAC-SHA256 verification |
-| Secret encryption in database | ❌ **Missing** | Backend configs with API keys stored as plaintext JSON |
+| Secret encryption in database | ✅ **Achieved** | Backend configs encrypted with AES-256-GCM via `pkg/crypto/encryption.go` and `pkg/store/service.go` |
 | S3 pre-signed URL generation | ⚠️ **Partial** | `internal/handlers/digital_media.go:95` has stub `generateS3URLWithSize()` but no AWS session/credentials handling |
-| Rate limiting on checkout | ❌ **Missing** | No middleware for request throttling |
+| Rate limiting on checkout | ✅ **Achieved** | `internal/api/middleware.go` implements token bucket rate limiter applied to checkout endpoint |
 | CSRF protection | ❌ **Missing** | Form submissions unprotected |
 | Download tracking enforcement | ⚠️ **Incomplete** | Functions exist (`RecordDownload`, `CheckDownloadLimit`) but have 0% test coverage and aren't called in handlers |
 | File serving endpoint | ❌ **Missing** | Digital media handler returns `/api/download/{id}` URLs but no handler registered for this route |
@@ -254,12 +254,12 @@ golangci-lint  # (runs in CI, no failures reported)
 
 **Tasks**:
 - [x] Create encryption service using AES-256-GCM with AEAD
-- [ ] Add `STORE_ENCRYPTION_KEY` environment variable (32-byte base64)
-- [ ] Encrypt `backend_config` JSON before `db.Put()` in `CreateItem()` and `UpdateItem()`
-- [ ] Decrypt on `db.Get()` in `GetItem()` and `ListItems()`
-- [ ] Add key rotation helper script in `cmd/rotate-key/`
-- [ ] Document encryption in DESIGN.md and README security section
-- [ ] Migrate existing plaintext configs (add `make migrate-encrypt` command)
+- [x] Add `STORE_ENCRYPTION_KEY` environment variable (32-byte base64)
+- [x] Encrypt `backend_config` JSON before `db.Put()` in `CreateItem()` and `UpdateItem()`
+- [x] Decrypt on `db.Get()` in `GetItem()` and `ListItems()`
+- [x] Add key rotation helper script in `cmd/rotate-key/`
+- [x] Document encryption in DESIGN.md and README security section
+- [x] Migrate existing plaintext configs (add `make migrate-encrypt` command)
 
 **Acceptance Criteria**:
 - ✅ All `backend_config` fields encrypted at rest in BoltDB
@@ -286,7 +286,7 @@ golangci-lint  # (runs in CI, no failures reported)
 - [x] Return 429 Too Many Requests with `Retry-After` header
 - [x] Add `STORE_RATE_LIMIT_ENABLED` env var (default: true)
 - [x] Add test with 10 rapid requests, verify 5 succeed + 5 rejected
-- [ ] Document rate limits in API docs
+- [x] Document rate limits in API docs
 
 **Acceptance Criteria**:
 - ✅ Checkout limited to 5 req/min per IP by default

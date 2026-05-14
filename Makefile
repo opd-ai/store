@@ -1,4 +1,4 @@
-.PHONY: help build run test docker-up docker-down docker-logs clean lint fmt vet install-deps
+.PHONY: help build run test docker-up docker-down docker-logs clean lint fmt vet install-deps generate-key rotate-key
 
 help:
 	@echo "opd-ai/store development tasks"
@@ -17,6 +17,8 @@ help:
 	@echo "  make vet             - Run go vet"
 	@echo "  make clean           - Clean build artifacts"
 	@echo "  make install-deps    - Download dependencies"
+	@echo "  make generate-key    - Generate a new encryption key"
+	@echo "  make rotate-key      - Rotate encryption keys (requires OLD_KEY and NEW_KEY)"
 
 build:
 	@echo "Building store binary..."
@@ -88,3 +90,16 @@ install-deps:
 
 check: fmt lint vet test
 	@echo "All checks passed!"
+
+generate-key:
+	@echo "Generating new encryption key..."
+	@go run ./cmd/rotate-key -generate
+
+rotate-key:
+	@echo "Rotating encryption keys..."
+	@if [ -z "$(NEW_KEY)" ]; then \
+		echo "Error: NEW_KEY is required. Usage: make rotate-key NEW_KEY=<base64-key> [OLD_KEY=<base64-key>]"; \
+		exit 1; \
+	fi
+	@go run ./cmd/rotate-key -old-key="$(OLD_KEY)" -new-key="$(NEW_KEY)"
+

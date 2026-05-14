@@ -148,6 +148,47 @@ pip install openapi-spec-validator
 openapi-spec-validator docs/api/openapi.yaml
 ```
 
+## Rate Limiting
+
+To prevent abuse and ensure fair resource allocation, the checkout endpoint is rate-limited.
+
+**Default Limits**:
+- **5 requests per minute** per IP address for `/api/checkout`
+- Burst allowance: 5 requests
+- Admin endpoints are exempt from rate limiting
+
+**Rate Limit Headers**:
+
+When rate limited, the API returns HTTP 429 Too Many Requests with a `Retry-After` header:
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 60
+Content-Type: application/json
+
+{
+  "error": "rate limit exceeded"
+}
+```
+
+The `Retry-After` header indicates seconds to wait before retrying.
+
+**Configuration**:
+
+Adjust rate limits via environment variables:
+
+```bash
+export STORE_RATE_LIMIT_REQUESTS=10    # Requests per window
+export STORE_RATE_LIMIT_BURST=5        # Burst allowance
+export STORE_RATE_LIMIT_ENABLED=true   # Enable/disable (default: true)
+```
+
+**Best Practices**:
+- Implement exponential backoff in your client
+- Monitor the `Retry-After` header
+- Cache catalog data to reduce repeated requests
+- Use webhooks for payment confirmation instead of polling
+
 ## Additional Resources
 
 - [OpenAPI 3.0 Specification](https://spec.openapis.org/oas/v3.0.3)
