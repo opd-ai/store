@@ -367,14 +367,14 @@ golangci-lint  # (runs in CI, no failures reported)
 - `pkg/store/service.go` (lines 822-890 - untested functions)
 
 **Tasks**:
-- [ ] Call `RecordDownload(ctx, paymentID, r.RemoteAddr, r.UserAgent)` in download handler
-- [ ] In digital media handler, check `CheckDownloadLimit()` before returning URL
-- [ ] Return error if limit exceeded, include count in error message
-- [ ] Add BoltDB bucket `download_logs` (already defined in schema but unused)
-- [ ] Write test cases:
-  - [ ] Record 5 downloads, verify count = 5
-  - [ ] Set limit=3, attempt 4th download, verify rejection
-  - [ ] Test IP tracking (same payment, different IPs)
+- [x] Call `RecordDownload(ctx, paymentID, r.RemoteAddr, r.UserAgent)` in download handler
+- [x] In digital media handler, check `CheckDownloadLimit()` before returning URL
+- [x] Return error if limit exceeded, include count in error message
+- [x] Add BoltDB bucket `download_logs` (already defined in schema but unused)
+- [x] Write test cases:
+  - [x] Record 5 downloads, verify count = 5
+  - [x] Set limit=3, attempt 4th download, verify rejection
+  - [x] Test IP tracking (same payment, different IPs)
 - [ ] Update README to document download limits feature
 
 **Acceptance Criteria**:
