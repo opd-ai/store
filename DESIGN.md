@@ -385,7 +385,6 @@ func (r *HandlerRegistry) All() map[string]HandlerMetadata
    - `STORE_PAYWALL_URL`: opd-ai/paywall service URL
    - `STORE_PORT`: Server port (default: 8080)
    - `STORE_ADMIN_TOKEN`: API token for admin endpoints
-   - `STORE_TEMPLATES_DIR`: Path to custom HTML/CSS templates
    - Handler-specific: `STORE_HANDLER_DIGITAL_MEDIA_S3_BUCKET`, etc.
 
 2. **Config File** (config.yaml in app root)

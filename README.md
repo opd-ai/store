@@ -62,7 +62,6 @@ STORE_PAYWALL_WEBHOOK_SECRET=webhook_secret_12345
 STORE_PUBLIC_URL=http://localhost:8080
 STORE_AUTO_FULFILL=true
 STORE_ADMIN_TOKEN=your-secret-token
-STORE_TEMPLATES_DIR=./templates
 STORE_UPLOADS_DIR=./data/uploads
 STORE_LOG_LEVEL=debug
 STORE_LOG_FORMAT=json
@@ -81,7 +80,6 @@ STORE_LOG_FORMAT=json
 | `STORE_PUBLIC_URL` | Yes | Public URL of this store (for webhook callbacks) |
 | `STORE_AUTO_FULFILL` | No | Auto-fulfill payments after confirmation (default: true) |
 | `STORE_ADMIN_TOKEN` | Yes | Token for admin API authentication |
-| `STORE_TEMPLATES_DIR` | No | Directory for templates (default: ./templates) |
 | `STORE_UPLOADS_DIR` | No | Directory for uploads (default: ./data/uploads) |
 | `STORE_LOG_LEVEL` | No | Log level: debug, info, warn, error (default: info) |
 | `STORE_LOG_FORMAT` | No | Log format: json or text (default: json) |

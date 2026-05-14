@@ -106,9 +106,6 @@ STORE_LOG_FORMAT=json
 ### Optional Variables
 
 ```bash
-# Templates (for custom handler)
-STORE_TEMPLATES_DIR=/etc/store/templates
-
 # AWS S3 (for digital media handler with S3 storage)
 AWS_ACCESS_KEY_ID=your_access_key
 AWS_SECRET_ACCESS_KEY=your_secret_key

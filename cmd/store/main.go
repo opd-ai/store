@@ -169,7 +169,6 @@ func waitForShutdown(server *http.Server) {
 func ensureDirectories() error {
 	dirs := []string{
 		os.Getenv("STORE_UPLOADS_DIR"),
-		os.Getenv("STORE_TEMPLATES_DIR"),
 	}
 
 	for _, dir := range dirs {
