@@ -61,7 +61,7 @@ type rateLimiter struct {
 }
 
 // newRateLimiter creates a new rate limiter with the specified requests per minute and burst size.
-func newRateLimiter(requestsPerMinute int, burst int) *rateLimiter {
+func newRateLimiter(requestsPerMinute, burst int) *rateLimiter {
 	return &rateLimiter{
 		limiters: make(map[string]*rate.Limiter),
 		limit:    rate.Limit(float64(requestsPerMinute) / 60.0), // Convert per-minute to per-second
@@ -86,7 +86,7 @@ func (rl *rateLimiter) getLimiter(ip string) *rate.Limiter {
 // RateLimitMiddleware creates a middleware that limits requests per IP address.
 // requestsPerMinute: number of requests allowed per minute
 // burst: burst size for token bucket (allows short bursts)
-func RateLimitMiddleware(requestsPerMinute int, burst int) func(http.Handler) http.Handler {
+func RateLimitMiddleware(requestsPerMinute, burst int) func(http.Handler) http.Handler {
 	// Check if rate limiting is enabled
 	enabled := os.Getenv("STORE_RATE_LIMIT_ENABLED")
 	if enabled == "false" {
@@ -138,7 +138,7 @@ func getClientIP(r *http.Request) string {
 }
 
 // GetRateLimitConfig returns rate limit configuration from environment variables.
-func GetRateLimitConfig() (requestsPerMinute int, burst int) {
+func GetRateLimitConfig() (requestsPerMinute, burst int) {
 	requestsPerMinute = 5 // Default: 5 requests per minute
 	burst = 5             // Default: allow burst of 5
 
