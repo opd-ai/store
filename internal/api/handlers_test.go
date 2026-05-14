@@ -1860,131 +1860,131 @@ func TestWebhookPaymentConfirmed_InvalidSignature(t *testing.T) {
 
 // TestRateLimitMiddleware tests rate limiting for API endpoints
 func TestRateLimitMiddleware(t *testing.T) {
-// Test with rate limiting enabled
-oldEnabled := os.Getenv("STORE_RATE_LIMIT_ENABLED")
-os.Setenv("STORE_RATE_LIMIT_ENABLED", "true")
-defer os.Setenv("STORE_RATE_LIMIT_ENABLED", oldEnabled)
+	// Test with rate limiting enabled
+	oldEnabled := os.Getenv("STORE_RATE_LIMIT_ENABLED")
+	os.Setenv("STORE_RATE_LIMIT_ENABLED", "true")
+	defer os.Setenv("STORE_RATE_LIMIT_ENABLED", oldEnabled)
 
-// Create a simple handler that just returns 200 OK
-handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-w.WriteHeader(http.StatusOK)
-})
+	// Create a simple handler that just returns 200 OK
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
 
-// Apply rate limiting middleware - 3 requests per minute, burst of 3
-rateLimited := RateLimitMiddleware(3, 3)(handler)
+	// Apply rate limiting middleware - 3 requests per minute, burst of 3
+	rateLimited := RateLimitMiddleware(3, 3)(handler)
 
-// Make multiple requests from the same IP
-for i := 0; i < 5; i++ {
-req := httptest.NewRequest(http.MethodGet, "/test", nil)
-req.RemoteAddr = "192.168.1.1:12345"
-w := httptest.NewRecorder()
+	// Make multiple requests from the same IP
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.RemoteAddr = "192.168.1.1:12345"
+		w := httptest.NewRecorder()
 
-rateLimited.ServeHTTP(w, req)
+		rateLimited.ServeHTTP(w, req)
 
-if i < 3 {
-// First 3 requests should succeed
-if w.Code != http.StatusOK {
-t.Errorf("request %d: expected status %d, got %d", i, http.StatusOK, w.Code)
-}
-} else {
-// Requests 4 and 5 should be rate limited
-if w.Code != http.StatusTooManyRequests {
-t.Errorf("request %d: expected status %d for rate limited request, got %d", i, http.StatusTooManyRequests, w.Code)
-}
-// Check Retry-After header
-if w.Header().Get("Retry-After") != "60" {
-t.Errorf("request %d: expected Retry-After header '60', got '%s'", i, w.Header().Get("Retry-After"))
-}
-}
-}
+		if i < 3 {
+			// First 3 requests should succeed
+			if w.Code != http.StatusOK {
+				t.Errorf("request %d: expected status %d, got %d", i, http.StatusOK, w.Code)
+			}
+		} else {
+			// Requests 4 and 5 should be rate limited
+			if w.Code != http.StatusTooManyRequests {
+				t.Errorf("request %d: expected status %d for rate limited request, got %d", i, http.StatusTooManyRequests, w.Code)
+			}
+			// Check Retry-After header
+			if w.Header().Get("Retry-After") != "60" {
+				t.Errorf("request %d: expected Retry-After header '60', got '%s'", i, w.Header().Get("Retry-After"))
+			}
+		}
+	}
 }
 
 // TestRateLimitMiddleware_Disabled tests that rate limiting can be disabled
 func TestRateLimitMiddleware_Disabled(t *testing.T) {
-oldEnabled := os.Getenv("STORE_RATE_LIMIT_ENABLED")
-os.Setenv("STORE_RATE_LIMIT_ENABLED", "false")
-defer os.Setenv("STORE_RATE_LIMIT_ENABLED", oldEnabled)
+	oldEnabled := os.Getenv("STORE_RATE_LIMIT_ENABLED")
+	os.Setenv("STORE_RATE_LIMIT_ENABLED", "false")
+	defer os.Setenv("STORE_RATE_LIMIT_ENABLED", oldEnabled)
 
-handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-w.WriteHeader(http.StatusOK)
-})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
 
-rateLimited := RateLimitMiddleware(1, 1)(handler)
+	rateLimited := RateLimitMiddleware(1, 1)(handler)
 
-// Make 10 requests - all should succeed when rate limiting is disabled
-for i := 0; i < 10; i++ {
-req := httptest.NewRequest(http.MethodGet, "/test", nil)
-req.RemoteAddr = "192.168.1.1:12345"
-w := httptest.NewRecorder()
+	// Make 10 requests - all should succeed when rate limiting is disabled
+	for i := 0; i < 10; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.RemoteAddr = "192.168.1.1:12345"
+		w := httptest.NewRecorder()
 
-rateLimited.ServeHTTP(w, req)
+		rateLimited.ServeHTTP(w, req)
 
-if w.Code != http.StatusOK {
-t.Errorf("request %d: expected status %d, got %d (rate limiting should be disabled)", i, http.StatusOK, w.Code)
-}
-}
+		if w.Code != http.StatusOK {
+			t.Errorf("request %d: expected status %d, got %d (rate limiting should be disabled)", i, http.StatusOK, w.Code)
+		}
+	}
 }
 
 // TestRateLimitMiddleware_DifferentIPs tests that different IPs have separate rate limits
 func TestRateLimitMiddleware_DifferentIPs(t *testing.T) {
-oldEnabled := os.Getenv("STORE_RATE_LIMIT_ENABLED")
-os.Setenv("STORE_RATE_LIMIT_ENABLED", "true")
-defer os.Setenv("STORE_RATE_LIMIT_ENABLED", oldEnabled)
+	oldEnabled := os.Getenv("STORE_RATE_LIMIT_ENABLED")
+	os.Setenv("STORE_RATE_LIMIT_ENABLED", "true")
+	defer os.Setenv("STORE_RATE_LIMIT_ENABLED", oldEnabled)
 
-handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-w.WriteHeader(http.StatusOK)
-})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
 
-rateLimited := RateLimitMiddleware(2, 2)(handler)
+	rateLimited := RateLimitMiddleware(2, 2)(handler)
 
-// Make requests from different IPs
-ips := []string{"192.168.1.1:12345", "192.168.1.2:12345", "192.168.1.3:12345"}
+	// Make requests from different IPs
+	ips := []string{"192.168.1.1:12345", "192.168.1.2:12345", "192.168.1.3:12345"}
 
-for _, ip := range ips {
-for i := 0; i < 2; i++ {
-req := httptest.NewRequest(http.MethodGet, "/test", nil)
-req.RemoteAddr = ip
-w := httptest.NewRecorder()
+	for _, ip := range ips {
+		for i := 0; i < 2; i++ {
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req.RemoteAddr = ip
+			w := httptest.NewRecorder()
 
-rateLimited.ServeHTTP(w, req)
+			rateLimited.ServeHTTP(w, req)
 
-// Each IP should be able to make 2 requests
-if w.Code != http.StatusOK {
-t.Errorf("IP %s request %d: expected status %d, got %d", ip, i, http.StatusOK, w.Code)
-}
-}
-}
+			// Each IP should be able to make 2 requests
+			if w.Code != http.StatusOK {
+				t.Errorf("IP %s request %d: expected status %d, got %d", ip, i, http.StatusOK, w.Code)
+			}
+		}
+	}
 }
 
 // TestGetRateLimitConfig tests configuration reading from environment
 func TestGetRateLimitConfig(t *testing.T) {
-// Test default values
-oldLimit := os.Getenv("STORE_RATE_LIMIT_REQUESTS_PER_MIN")
-oldBurst := os.Getenv("STORE_RATE_LIMIT_BURST")
-os.Unsetenv("STORE_RATE_LIMIT_REQUESTS_PER_MIN")
-os.Unsetenv("STORE_RATE_LIMIT_BURST")
-defer func() {
-os.Setenv("STORE_RATE_LIMIT_REQUESTS_PER_MIN", oldLimit)
-os.Setenv("STORE_RATE_LIMIT_BURST", oldBurst)
-}()
+	// Test default values
+	oldLimit := os.Getenv("STORE_RATE_LIMIT_REQUESTS_PER_MIN")
+	oldBurst := os.Getenv("STORE_RATE_LIMIT_BURST")
+	os.Unsetenv("STORE_RATE_LIMIT_REQUESTS_PER_MIN")
+	os.Unsetenv("STORE_RATE_LIMIT_BURST")
+	defer func() {
+		os.Setenv("STORE_RATE_LIMIT_REQUESTS_PER_MIN", oldLimit)
+		os.Setenv("STORE_RATE_LIMIT_BURST", oldBurst)
+	}()
 
-limit, burst := GetRateLimitConfig()
-if limit != 5 {
-t.Errorf("expected default limit 5, got %d", limit)
-}
-if burst != 5 {
-t.Errorf("expected default burst 5, got %d", burst)
-}
+	limit, burst := GetRateLimitConfig()
+	if limit != 5 {
+		t.Errorf("expected default limit 5, got %d", limit)
+	}
+	if burst != 5 {
+		t.Errorf("expected default burst 5, got %d", burst)
+	}
 
-// Test custom values
-os.Setenv("STORE_RATE_LIMIT_REQUESTS_PER_MIN", "10")
-os.Setenv("STORE_RATE_LIMIT_BURST", "3")
+	// Test custom values
+	os.Setenv("STORE_RATE_LIMIT_REQUESTS_PER_MIN", "10")
+	os.Setenv("STORE_RATE_LIMIT_BURST", "3")
 
-limit, burst = GetRateLimitConfig()
-if limit != 10 {
-t.Errorf("expected custom limit 10, got %d", limit)
-}
-if burst != 3 {
-t.Errorf("expected custom burst 3, got %d", burst)
-}
+	limit, burst = GetRateLimitConfig()
+	if limit != 10 {
+		t.Errorf("expected custom limit 10, got %d", limit)
+	}
+	if burst != 3 {
+		t.Errorf("expected custom burst 3, got %d", burst)
+	}
 }
