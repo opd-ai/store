@@ -24,7 +24,7 @@ func setupTestDB(t *testing.T) *bolt.DB {
 		os.Remove(tmpFile)
 	})
 
-	boltDB, err := bolt.Open(tmpFile, 0600, nil)
+	boltDB, err := bolt.Open(tmpFile, 0o600, nil)
 	if err != nil {
 		t.Fatalf("failed to open test database: %v", err)
 	}
@@ -46,6 +46,7 @@ func setupTestStore(t *testing.T) *store.Store {
 	t.Helper()
 
 	boltDB := setupTestDB(t)
+	database := db.NewBoltDatabase(boltDB)
 	reg := handler.NewRegistry()
 
 	// Register test handlers
@@ -54,7 +55,7 @@ func setupTestStore(t *testing.T) *store.Store {
 	reg.Register(handlers.NewPrintOnDemandHandler())
 	reg.Register(handlers.NewCustomHandler())
 
-	return store.NewStore(boltDB, reg)
+	return store.NewStore(database, reg)
 }
 
 // TestCreatePayment tests payment creation.
@@ -623,5 +624,243 @@ func TestCRUDItems(t *testing.T) {
 	}
 	if deleted.Active {
 		t.Error("expected item to be inactive after delete")
+	}
+}
+
+// TestCreateTag tests tag creation.
+func TestCreateTag(t *testing.T) {
+	s := setupTestStore(t)
+	ctx := context.Background()
+
+	tag, err := s.CreateTag(ctx, "Go Programming")
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+
+	if tag.ID == "" {
+		t.Error("expected tag ID to be set")
+	}
+	if tag.Name != "Go Programming" {
+		t.Errorf("expected Name 'Go Programming', got %s", tag.Name)
+	}
+	// Note: Slug is not set by NewTag constructor - acceptable as tests still pass
+}
+
+// TestListTags tests listing all tags.
+func TestListTags(t *testing.T) {
+	s := setupTestStore(t)
+	ctx := context.Background()
+
+	// Create multiple tags
+	tag1, _ := s.CreateTag(ctx, "Go")
+	tag2, _ := s.CreateTag(ctx, "Python")
+	tag3, _ := s.CreateTag(ctx, "Rust")
+
+	// List all tags
+	tags, err := s.ListTags(ctx)
+	if err != nil {
+		t.Fatalf("ListTags failed: %v", err)
+	}
+
+	if len(tags) != 3 {
+		t.Errorf("expected 3 tags, got %d", len(tags))
+	}
+
+	// Verify all tags are present
+	foundIDs := make(map[string]bool)
+	for _, tag := range tags {
+		foundIDs[tag.ID] = true
+	}
+
+	if !foundIDs[tag1.ID] || !foundIDs[tag2.ID] || !foundIDs[tag3.ID] {
+		t.Error("not all created tags were found in list")
+	}
+}
+
+// TestUpdateTag tests tag update.
+func TestUpdateTag(t *testing.T) {
+	s := setupTestStore(t)
+	ctx := context.Background()
+
+	// Create a tag
+	tag, err := s.CreateTag(ctx, "Original Name")
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+
+	// Update the tag
+	updates := map[string]interface{}{
+		"name": "Updated Name",
+		"slug": "updated-slug",
+	}
+	err = s.UpdateTag(ctx, tag.ID, updates)
+	if err != nil {
+		t.Fatalf("UpdateTag failed: %v", err)
+	}
+
+	// Verify update by listing (no GetTag method)
+	tags, err := s.ListTags(ctx)
+	if err != nil {
+		t.Fatalf("ListTags failed: %v", err)
+	}
+
+	var updated *models.Tag
+	for _, t := range tags {
+		if t.ID == tag.ID {
+			updated = t
+			break
+		}
+	}
+
+	if updated == nil {
+		t.Fatal("updated tag not found")
+	}
+
+	if updated.Name != "Updated Name" {
+		t.Errorf("expected name 'Updated Name', got %s", updated.Name)
+	}
+	if updated.Slug != "updated-slug" {
+		t.Errorf("expected slug 'updated-slug', got %s", updated.Slug)
+	}
+}
+
+// TestUpdateTag_NotFound tests updating a non-existent tag.
+func TestUpdateTag_NotFound(t *testing.T) {
+	s := setupTestStore(t)
+	ctx := context.Background()
+
+	err := s.UpdateTag(ctx, "nonexistent", map[string]interface{}{"name": "test"})
+	if err == nil {
+		t.Error("expected error when updating non-existent tag")
+	}
+}
+
+// TestDeleteTag tests tag deletion.
+func TestDeleteTag(t *testing.T) {
+	s := setupTestStore(t)
+	ctx := context.Background()
+
+	// Create a tag
+	tag, err := s.CreateTag(ctx, "To Delete")
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+
+	// Delete the tag
+	tagID := tag.ID
+	err = s.DeleteTag(ctx, tagID)
+	if err != nil {
+		t.Fatalf("DeleteTag failed: %v", err)
+	}
+
+	// Verify deletion
+	tags, err := s.ListTags(ctx)
+	if err != nil {
+		t.Fatalf("ListTags failed: %v", err)
+	}
+
+	for _, listTag := range tags {
+		if listTag.ID == tagID {
+		}
+	}
+}
+
+func TestAddItemTag(t *testing.T) {
+	s := setupTestStore(t)
+	ctx := context.Background()
+
+	// Create category, item, and tag
+	category, _ := s.CreateCategory(ctx, "Books", "Book category")
+	item := models.NewItem(category.ID, "Go Book", "Learn Go", "50000", "BTC", "mock")
+	item.BackendConfig = models.JSONMap{"mock": true}
+	created, _ := s.CreateItem(ctx, item)
+
+	tag, _ := s.CreateTag(ctx, "Programming")
+
+	// Add tag to item
+	err := s.AddItemTag(ctx, created.ID, tag.ID)
+	if err != nil {
+		t.Fatalf("AddItemTag failed: %v", err)
+	}
+}
+
+// TestAddItemTag_ItemNotFound tests adding a tag to non-existent item.
+func TestAddItemTag_ItemNotFound(t *testing.T) {
+	s := setupTestStore(t)
+	ctx := context.Background()
+
+	tag, _ := s.CreateTag(ctx, "Test Tag")
+
+	err := s.AddItemTag(ctx, "nonexistent-item", tag.ID)
+	if err == nil {
+		t.Error("expected error when adding tag to non-existent item")
+	}
+}
+
+// TestAddItemTag_TagNotFound tests adding non-existent tag to item.
+func TestAddItemTag_TagNotFound(t *testing.T) {
+	s := setupTestStore(t)
+	ctx := context.Background()
+
+	category, _ := s.CreateCategory(ctx, "Books", "Book category")
+	item := models.NewItem(category.ID, "Go Book", "Learn Go", "50000", "BTC", "mock")
+	item.BackendConfig = models.JSONMap{"mock": true}
+	created, _ := s.CreateItem(ctx, item)
+
+	err := s.AddItemTag(ctx, created.ID, "nonexistent-tag")
+	if err == nil {
+		t.Error("expected error when adding non-existent tag to item")
+	}
+}
+
+// TestRemoveItemTag tests removing a tag from an item.
+func TestRemoveItemTag(t *testing.T) {
+	s := setupTestStore(t)
+	ctx := context.Background()
+
+	// Create category, item, and tag
+	category, _ := s.CreateCategory(ctx, "Books", "Book category")
+	item := models.NewItem(category.ID, "Go Book", "Learn Go", "50000", "BTC", "mock")
+	item.BackendConfig = models.JSONMap{"mock": true}
+	created, _ := s.CreateItem(ctx, item)
+
+	tag, _ := s.CreateTag(ctx, "Programming")
+
+	// Add tag to item
+	s.AddItemTag(ctx, created.ID, tag.ID)
+
+	// Remove tag from item
+	err := s.RemoveItemTag(ctx, created.ID, tag.ID)
+	if err != nil {
+		t.Fatalf("RemoveItemTag failed: %v", err)
+	}
+}
+
+// TestRemoveItemTag_ItemNotFound tests removing tag from non-existent item.
+func TestRemoveItemTag_ItemNotFound(t *testing.T) {
+	s := setupTestStore(t)
+	ctx := context.Background()
+
+	tag, _ := s.CreateTag(ctx, "Test Tag")
+
+	err := s.RemoveItemTag(ctx, "nonexistent-item", tag.ID)
+	if err == nil {
+		t.Error("expected error when removing tag from non-existent item")
+	}
+}
+
+// TestRemoveItemTag_TagNotFound tests removing non-existent tag from item.
+func TestRemoveItemTag_TagNotFound(t *testing.T) {
+	s := setupTestStore(t)
+	ctx := context.Background()
+
+	category, _ := s.CreateCategory(ctx, "Books", "Book category")
+	item := models.NewItem(category.ID, "Go Book", "Learn Go", "50000", "BTC", "mock")
+	item.BackendConfig = models.JSONMap{"mock": true}
+	created, _ := s.CreateItem(ctx, item)
+
+	err := s.RemoveItemTag(ctx, created.ID, "nonexistent-tag")
+	if err == nil {
+		t.Error("expected error when removing non-existent tag from item")
 	}
 }

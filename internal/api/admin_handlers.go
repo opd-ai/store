@@ -26,9 +26,12 @@ func (h *Handler) ListPayments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filters := map[string]interface{}{
-		"status":  r.URL.Query().Get("status"),
-		"item_id": r.URL.Query().Get("item_id"),
+	filters := map[string]interface{}{}
+	if status := r.URL.Query().Get("status"); status != "" {
+		filters["status"] = status
+	}
+	if itemID := r.URL.Query().Get("item_id"); itemID != "" {
+		filters["item_id"] = itemID
 	}
 
 	payments, err := h.store.ListPayments(r.Context(), filters)

@@ -75,8 +75,11 @@ func initializeServices(boltDB *bolt.DB) *api.Handler {
 		log.Fatalf("Failed to register handlers: %v", err)
 	}
 
+	// Wrap BoltDB in Database interface
+	database := db.NewBoltDatabase(boltDB)
+
 	// Initialize store service
-	storeService := store.NewStore(boltDB, registry)
+	storeService := store.NewStore(database, registry)
 
 	// Initialize paywall client
 	paywallURL := os.Getenv("STORE_PAYWALL_URL")
@@ -174,7 +177,7 @@ func ensureDirectories() error {
 			continue
 		}
 
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 
@@ -192,11 +195,11 @@ func initDatabase() (*bolt.DB, error) {
 	}
 
 	// Ensure the data directory exists
-	if err := os.MkdirAll("./data", 0755); err != nil {
+	if err := os.MkdirAll("./data", 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	boltDB, err := bolt.Open(dbPath, 0600, &bolt.Options{Timeout: 1 * time.Second})
+	boltDB, err := bolt.Open(dbPath, 0o600, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}

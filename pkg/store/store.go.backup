@@ -69,7 +69,7 @@ type Service interface {
 // Store orchestrates the payment-to-fulfillment workflow.
 // It manages payment creation, confirmation, and handler dispatch.
 type Store struct {
-	boltDB   *bolt.DB
+	database db.Database
 	registry handler.HandlerRegistry
 }
 
@@ -77,9 +77,9 @@ type Store struct {
 var _ Service = (*Store)(nil)
 
 // NewStore creates a new Store instance.
-func NewStore(boltDB *bolt.DB, registry handler.HandlerRegistry) *Store {
+func NewStore(database db.Database, registry handler.HandlerRegistry) *Store {
 	return &Store{
-		boltDB:   boltDB,
+		database: database,
 		registry: registry,
 	}
 }

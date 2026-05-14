@@ -69,7 +69,7 @@ func (h *CustomHandler) extractWebhookConfig(config map[string]interface{}) (web
 }
 
 // invokeWithRetry attempts webhook invocation with exponential backoff.
-func (h *CustomHandler) invokeWithRetry(ctx context.Context, webhookURL string, payload map[string]interface{}, config map[string]interface{}, retryCount int) (map[string]interface{}, error) {
+func (h *CustomHandler) invokeWithRetry(ctx context.Context, webhookURL string, payload, config map[string]interface{}, retryCount int) (map[string]interface{}, error) {
 	var lastErr error
 	for attempt := 0; attempt <= retryCount; attempt++ {
 		result, err := h.invokeWebhook(ctx, webhookURL, payload, config)

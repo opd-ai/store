@@ -30,7 +30,7 @@ func setupIntegrationTest(t *testing.T) (*api.Handler, *bolt.DB, *store.Store, *
 		os.Remove(tmpFile)
 	})
 
-	boltDB, err := bolt.Open(tmpFile, 0600, nil)
+	boltDB, err := bolt.Open(tmpFile, 0o600, nil)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -53,8 +53,11 @@ func setupIntegrationTest(t *testing.T) (*api.Handler, *bolt.DB, *store.Store, *
 		t.Fatalf("Failed to register handler: %v", err)
 	}
 
+	// Wrap BoltDB in Database interface
+	database := db.NewBoltDatabase(boltDB)
+
 	// Create store
-	s := store.NewStore(boltDB, reg)
+	s := store.NewStore(database, reg)
 
 	// Create mock paywall client (for integration tests, we still mock external services)
 	paywallClient := paywall.NewClient("http://test-paywall", "test-api-key")
@@ -513,7 +516,7 @@ func TestPaymentFlow_CheckoutEndpoint(t *testing.T) {
 	// Create test infrastructure with mock paywall URL
 	tmpFile := "/tmp/test_int_" + t.Name() + ".db"
 	t.Cleanup(func() { os.Remove(tmpFile) })
-	boltDB, err := bolt.Open(tmpFile, 0600, nil)
+	boltDB, err := bolt.Open(tmpFile, 0o600, nil)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -530,7 +533,8 @@ func TestPaymentFlow_CheckoutEndpoint(t *testing.T) {
 		t.Fatalf("Failed to register handler: %v", err)
 	}
 
-	s := store.NewStore(boltDB, reg)
+	database := db.NewBoltDatabase(boltDB)
+	s := store.NewStore(database, reg)
 	paywallClient := paywall.NewClient(mockPaywall.URL, "test-api-key")
 	h := api.NewHandler(s, paywallClient)
 
@@ -641,7 +645,7 @@ func setupTestWithHandlers(t *testing.T) (*api.Handler, *bolt.DB, *store.Store, 
 	// Create in-memory database
 	tmpFile := "/tmp/test_int_" + t.Name() + ".db"
 	t.Cleanup(func() { os.Remove(tmpFile) })
-	boltDB, err := bolt.Open(tmpFile, 0600, nil)
+	boltDB, err := bolt.Open(tmpFile, 0o600, nil)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -667,8 +671,11 @@ func setupTestWithHandlers(t *testing.T) (*api.Handler, *bolt.DB, *store.Store, 
 		}
 	}
 
+	// Wrap BoltDB in Database interface
+	database := db.NewBoltDatabase(boltDB)
+
 	// Create store
-	s := store.NewStore(boltDB, reg)
+	s := store.NewStore(database, reg)
 
 	// Create mock paywall client with mock server URL
 	paywallClient := paywall.NewClient(mockPaywall.URL, "test-api-key")

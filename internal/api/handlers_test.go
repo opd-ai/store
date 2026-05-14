@@ -27,7 +27,7 @@ func setupTestDB(t *testing.T) *bolt.DB {
 		os.Remove(tmpFile)
 	})
 
-	boltDB, err := bolt.Open(tmpFile, 0600, nil)
+	boltDB, err := bolt.Open(tmpFile, 0o600, nil)
 	if err != nil {
 		t.Fatalf("failed to create test database: %v", err)
 	}
@@ -106,14 +106,15 @@ func (m *mockPaywallClient) VerifyWebhook(signature string, payload []byte, secr
 
 // setupTestHandler creates a handler with test database and mock paywall
 func setupTestHandler(t *testing.T) (*Handler, *store.Store) {
-	db := setupTestDB(t)
+	boltDB := setupTestDB(t)
 
 	reg := handler.NewRegistry()
 	if err := reg.Register(&mockHandler{}); err != nil {
 		t.Fatalf("failed to register handler: %v", err)
 	}
 
-	s := store.NewStore(db, reg)
+	database := db.NewBoltDatabase(boltDB)
+	s := store.NewStore(database, reg)
 
 	// Create a real paywall client - we'll mock the responses in tests
 	paywallClient := paywall.NewClient("http://test-paywall", "test-api-key")
