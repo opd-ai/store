@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -292,14 +293,28 @@ func getExpirationDuration(config handler.Config) int {
 }
 
 // createS3Session creates an AWS S3 service client.
+// Supports custom endpoints via AWS_ENDPOINT environment variable (for MinIO, etc.)
 func createS3Session(region string) (*s3.S3, error) {
-	sess, err := session.NewSession(&aws.Config{
+	config := &aws.Config{
 		Region: aws.String(region),
-	})
+	}
+
+	// Support custom endpoint for S3-compatible services (e.g., MinIO)
+	if endpoint := getEnv("AWS_ENDPOINT"); endpoint != "" {
+		config.Endpoint = aws.String(endpoint)
+		config.S3ForcePathStyle = aws.Bool(true) // Required for MinIO
+	}
+
+	sess, err := session.NewSession(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AWS session: %w", err)
 	}
 	return s3.New(sess), nil
+}
+
+// getEnv retrieves an environment variable value.
+func getEnv(key string) string {
+	return os.Getenv(key)
 }
 
 // getObjectSize retrieves the file size from S3 object metadata.

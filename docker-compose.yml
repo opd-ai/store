@@ -16,6 +16,26 @@ services:
     networks:
       - store_network
 
+  # MinIO service for S3-compatible object storage (testing)
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - store_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # Main store service
   store:
     build:
@@ -41,12 +61,20 @@ services:
       STORE_TEMPLATES_DIR: "/app/templates"
       STORE_UPLOADS_DIR: "/app/data/uploads"
       
+      # S3/MinIO configuration (for testing)
+      AWS_ENDPOINT: "http://minio:9000"
+      AWS_ACCESS_KEY_ID: "minioadmin"
+      AWS_SECRET_ACCESS_KEY: "minioadmin"
+      AWS_REGION: "us-east-1"
+      
       # Logging
       STORE_LOG_LEVEL: "debug"
       STORE_LOG_FORMAT: "json"
     depends_on:
       paywall-mock:
         condition: service_started
+      minio:
+        condition: service_healthy
     volumes:
       - ./templates:/app/templates
       - ./data:/app/data
@@ -61,6 +89,8 @@ services:
 
 volumes:
   store_data:
+    driver: local
+  minio_data:
     driver: local
 
 networks:

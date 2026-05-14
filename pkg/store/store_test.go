@@ -1179,3 +1179,96 @@ func TestCheckDownloadLimitZeroMax(t *testing.T) {
 		t.Error("expected limit not to be exceeded with maxDownloads=0 (unlimited)")
 	}
 }
+
+// TestCleanupOldAuditLogs tests the audit log retention/cleanup functionality.
+func TestCleanupOldAuditLogs(t *testing.T) {
+	// Set up test database and store
+	boltDB := setupTestDB(t)
+	database := db.NewBoltDatabase(boltDB)
+	reg := handler.NewRegistry()
+	s := store.NewStore(database, reg)
+	ctx := context.Background()
+
+	// Manually create audit logs with different timestamps
+	oldLog1 := models.NewAuditLog("admin123", "create_item", "item", "item_1", "127.0.0.1", "Mozilla", models.JSONMap{})
+	oldLog1.Timestamp = oldLog1.Timestamp.AddDate(0, 0, -100) // 100 days old
+
+	oldLog2 := models.NewAuditLog("admin123", "delete_item", "item", "item_2", "127.0.0.1", "Mozilla", models.JSONMap{})
+	oldLog2.Timestamp = oldLog2.Timestamp.AddDate(0, 0, -95) // 95 days old
+
+	recentLog := models.NewAuditLog("admin123", "update_item", "item", "item_3", "127.0.0.1", "Mozilla", models.JSONMap{})
+	recentLog.Timestamp = recentLog.Timestamp.AddDate(0, 0, -30) // 30 days old
+
+	// Insert logs directly into database
+	err := database.Update(func(tx db.Transaction) error {
+		bucket := tx.GetBucket(db.BucketAuditLogs)
+		if err := bucket.Put(oldLog1.ID, oldLog1); err != nil {
+			return err
+		}
+		if err := bucket.Put(oldLog2.ID, oldLog2); err != nil {
+			return err
+		}
+		return bucket.Put(recentLog.ID, recentLog)
+	})
+	if err != nil {
+		t.Fatalf("Failed to insert test audit logs: %v", err)
+	}
+
+	// Test cleanup with 90-day retention (should delete oldLog1 and oldLog2)
+	deletedCount, err := s.CleanupOldAuditLogs(ctx, 90)
+	if err != nil {
+		t.Fatalf("CleanupOldAuditLogs failed: %v", err)
+	}
+
+	if deletedCount != 2 {
+		t.Errorf("Expected 2 logs to be deleted, got %d", deletedCount)
+	}
+
+	// Verify that only the recent log remains
+	var remainingLogs []*models.AuditLog
+	err = database.View(func(tx db.Transaction) error {
+		return tx.GetBucket(db.BucketAuditLogs).GetAll(&remainingLogs)
+	})
+	if err != nil {
+		t.Fatalf("Failed to retrieve audit logs: %v", err)
+	}
+
+	if len(remainingLogs) != 1 {
+		t.Errorf("Expected 1 remaining log, got %d", len(remainingLogs))
+	}
+
+	if len(remainingLogs) > 0 && remainingLogs[0].ID != recentLog.ID {
+		t.Errorf("Expected remaining log ID %s, got %s", recentLog.ID, remainingLogs[0].ID)
+	}
+}
+
+// TestCleanupOldAuditLogs_NegativeRetention tests error handling for invalid retention days.
+func TestCleanupOldAuditLogs_NegativeRetention(t *testing.T) {
+	s := setupTestStore(t)
+	ctx := context.Background()
+
+	_, err := s.CleanupOldAuditLogs(ctx, -1)
+	if err == nil {
+		t.Error("Expected error for negative retention days, got nil")
+	}
+
+	_, err = s.CleanupOldAuditLogs(ctx, 0)
+	if err == nil {
+		t.Error("Expected error for zero retention days, got nil")
+	}
+}
+
+// TestCleanupOldAuditLogs_EmptyLogs tests cleanup when no logs exist.
+func TestCleanupOldAuditLogs_EmptyLogs(t *testing.T) {
+	s := setupTestStore(t)
+	ctx := context.Background()
+
+	deletedCount, err := s.CleanupOldAuditLogs(ctx, 90)
+	if err != nil {
+		t.Fatalf("CleanupOldAuditLogs failed: %v", err)
+	}
+
+	if deletedCount != 0 {
+		t.Errorf("Expected 0 logs to be deleted from empty database, got %d", deletedCount)
+	}
+}

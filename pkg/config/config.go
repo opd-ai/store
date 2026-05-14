@@ -38,6 +38,9 @@ type Config struct {
 	// Admin API
 	AdminToken string `mapstructure:"admin_token"`
 
+	// Audit log settings
+	AuditLogRetentionDays int `mapstructure:"audit_log_retention_days"`
+
 	// CORS settings
 	CORSOrigins []string `mapstructure:"cors_origins"`
 }
@@ -105,6 +108,9 @@ func setDefaults(v *viper.Viper) {
 	// Admin defaults
 	v.SetDefault("admin_token", "")
 
+	// Audit log defaults
+	v.SetDefault("audit_log_retention_days", 90)
+
 	// CORS defaults
 	v.SetDefault("cors_origins", []string{"*"})
 }
@@ -156,5 +162,10 @@ func applyEnvironmentOverrides(cfg *Config) {
 	// Admin token
 	if adminToken := os.Getenv("STORE_ADMIN_TOKEN"); adminToken != "" {
 		cfg.AdminToken = adminToken
+	}
+
+	// Audit log retention
+	if retentionDays := os.Getenv("STORE_AUDIT_LOG_RETENTION_DAYS"); retentionDays != "" {
+		fmt.Sscanf(retentionDays, "%d", &cfg.AuditLogRetentionDays)
 	}
 }

@@ -345,7 +345,7 @@ golangci-lint  # (runs in CI, no failures reported)
 - [x] Implement S3 `GetObject` pre-signed URL generation with expiration
 - [x] Use `s3.HeadObject()` to fetch file size for `file_size_mb` result field
 - [x] Handle AWS errors gracefully (bucket not found, invalid credentials, no permissions)
-- [ ] Add integration test with MinIO (local S3-compatible storage)
+- [x] Add integration test with MinIO (local S3-compatible storage)
 - [x] Document S3 setup in README (IAM policy requirements)
 
 **Acceptance Criteria**:
@@ -539,7 +539,7 @@ golangci-lint  # (runs in CI, no failures reported)
 - [x] Log all admin API calls: `{timestamp, admin_token, action, resource_id, changes}`
 - [x] Add `GET /admin/audit-logs` endpoint with filtering
 - [x] Redact sensitive fields (API keys) in logs
-- [ ] Add log retention configuration (default: 90 days)
+- [x] Add log retention configuration (default: 90 days)
 
 **Notes**: Infrastructure complete (bucket, AuditLog model, helper methods, endpoint). Full integration with all admin handlers pending.
 

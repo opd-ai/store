@@ -62,6 +62,9 @@ type Service interface {
 	RecordDownload(ctx context.Context, paymentID, ipAddress, userAgent string) error
 	GetDownloadCount(ctx context.Context, paymentID string) (int, error)
 	CheckDownloadLimit(ctx context.Context, paymentID string, maxDownloads int) (bool, error)
+
+	// Audit log operations
+	CleanupOldAuditLogs(ctx context.Context, retentionDays int) (int, error)
 }
 
 // Store orchestrates the payment-to-fulfillment workflow.
@@ -1007,4 +1010,40 @@ func (s *Store) decryptBackendConfig(config models.JSONMap) (models.JSONMap, err
 	}
 
 	return decrypted, nil
+}
+
+// CleanupOldAuditLogs removes audit log entries older than the specified retention period.
+// Returns the number of deleted entries.
+func (s *Store) CleanupOldAuditLogs(ctx context.Context, retentionDays int) (int, error) {
+	if retentionDays <= 0 {
+		return 0, fmt.Errorf("retention days must be positive")
+	}
+
+	cutoffTime := time.Now().AddDate(0, 0, -retentionDays)
+	deletedCount := 0
+
+	err := s.database.Update(func(tx db.Transaction) error {
+		// Get all audit logs
+		var allLogs []*models.AuditLog
+		if err := tx.GetBucket(db.BucketAuditLogs).GetAll(&allLogs); err != nil {
+			return fmt.Errorf("failed to list audit logs: %w", err)
+		}
+
+		// Delete logs older than cutoff time
+		for _, log := range allLogs {
+			if log.Timestamp.Before(cutoffTime) {
+				if err := tx.GetBucket(db.BucketAuditLogs).Delete(log.ID); err != nil {
+					return fmt.Errorf("failed to delete audit log %s: %w", log.ID, err)
+				}
+				deletedCount++
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return deletedCount, nil
 }
