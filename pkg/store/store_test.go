@@ -935,13 +935,22 @@ s := setupTestStore(t)
 ctx := context.Background()
 
 // Create test payment
-category, _ := s.CreateCategory(ctx, "Digital", "Digital products")
+category, err := s.CreateCategory(ctx, "Digital", "Digital products")
+if err != nil {
+t.Fatalf("CreateCategory failed: %v", err)
+}
 item := models.NewItem(category.ID, "Test Product", "Description", "100000", "BTC", "digital_media")
-item, _ = s.CreateItem(ctx, item)
-payment, _ := s.CreatePayment(ctx, item.ID, "100000", "BTC")
+item, err = s.CreateItem(ctx, item)
+if err != nil {
+t.Fatalf("CreateItem failed: %v", err)
+}
+payment, err := s.CreatePayment(ctx, item.ID, "100000", "BTC")
+if err != nil {
+t.Fatalf("CreatePayment failed: %v", err)
+}
 
 // Record a download
-err := s.RecordDownload(ctx, payment.ID, "192.168.1.1", "Mozilla/5.0")
+err = s.RecordDownload(ctx, payment.ID, "192.168.1.1", "Mozilla/5.0")
 if err != nil {
 t.Fatalf("RecordDownload failed: %v", err)
 }
@@ -956,16 +965,27 @@ t.Errorf("expected download count 1, got %d", count)
 }
 }
 
-// TestRecordMultipleDownloads tests recording multiple download attempts.
+// TestRecordMultipleDownloads tests
+
+ recording multiple download attempts.
 func TestRecordMultipleDownloads(t *testing.T) {
 s := setupTestStore(t)
 ctx := context.Background()
 
 // Create test payment
-category, _ := s.CreateCategory(ctx, "Digital", "Digital products")
+category, err := s.CreateCategory(ctx, "Digital", "Digital products")
+if err != nil {
+t.Fatalf("CreateCategory failed: %v", err)
+}
 item := models.NewItem(category.ID, "Test Product", "Description", "100000", "BTC", "digital_media")
-item, _ = s.CreateItem(ctx, item)
-payment, _ := s.CreatePayment(ctx, item.ID, "100000", "BTC")
+item, err = s.CreateItem(ctx, item)
+if err != nil {
+t.Fatalf("CreateItem failed: %v", err)
+}
+payment, err := s.CreatePayment(ctx, item.ID, "100000", "BTC")
+if err != nil {
+t.Fatalf("CreatePayment failed: %v", err)
+}
 
 // Record 5 downloads
 for i := 0; i < 5; i++ {
@@ -990,18 +1010,27 @@ func TestCheckDownloadLimit(t *testing.T) {
 s := setupTestStore(t)
 ctx := context.Background()
 
-// Create test payment
-category, _ := s.CreateCategory(ctx, "Digital", "Digital products")
+category, err := s.CreateCategory(ctx, "Digital", "Digital products")
+if err != nil {
+t.Fatalf("CreateCategory failed: %v", err)
+}
 item := models.NewItem(category.ID, "Test Product", "Description", "100000", "BTC", "digital_media")
-item, _ = s.CreateItem(ctx, item)
-payment, _ := s.CreatePayment(ctx, item.ID, "100000", "BTC")
+item, err = s.CreateItem(ctx, item)
+if err != nil {
+t.Fatalf("CreateItem failed: %v", err)
+}
+payment, err := s.CreatePayment(ctx, item.ID, "100000", "BTC")
+if err != nil {
+t.Fatalf("CreatePayment failed: %v", err)
+}
 
-// Set limit to 3
 maxDownloads := 3
 
-// Record 3 downloads (at limit)
+// Record 3 downloads
 for i := 0; i < 3; i++ {
-s.RecordDownload(ctx, payment.ID, "192.168.1.1", "Mozilla/5.0")
+if err := s.RecordDownload(ctx, payment.ID, "192.168.1.1", "Mozilla/5.0"); err != nil {
+t.Fatalf("RecordDownload failed: %v", err)
+}
 }
 
 // Check limit - should be at limit (true)
@@ -1019,20 +1048,30 @@ func TestCheckDownloadLimitNotExceeded(t *testing.T) {
 s := setupTestStore(t)
 ctx := context.Background()
 
-// Create test payment
-category, _ := s.CreateCategory(ctx, "Digital", "Digital products")
+category, err := s.CreateCategory(ctx, "Digital", "Digital products")
+if err != nil {
+t.Fatalf("CreateCategory failed: %v", err)
+}
 item := models.NewItem(category.ID, "Test Product", "Description", "100000", "BTC", "digital_media")
-item, _ = s.CreateItem(ctx, item)
-payment, _ := s.CreatePayment(ctx, item.ID, "100000", "BTC")
+item, err = s.CreateItem(ctx, item)
+if err != nil {
+t.Fatalf("CreateItem failed: %v", err)
+}
+payment, err := s.CreatePayment(ctx, item.ID, "100000", "BTC")
+if err != nil {
+t.Fatalf("CreatePayment failed: %v", err)
+}
 
-// Set limit to 10
 maxDownloads := 10
 
-// Record 2 downloads (under limit)
-s.RecordDownload(ctx, payment.ID, "192.168.1.1", "Mozilla/5.0")
-s.RecordDownload(ctx, payment.ID, "192.168.1.2", "Mozilla/5.0")
+// Record 2 downloads
+for i := 0; i < 2; i++ {
+if err := s.RecordDownload(ctx, payment.ID, "192.168.1.1", "Mozilla/5.0"); err != nil {
+t.Fatalf("RecordDownload failed: %v", err)
+}
+}
 
-// Check limit - should not be exceeded (false)
+// Check limit - should not be exceeded
 exceeded, err := s.CheckDownloadLimit(ctx, payment.ID, maxDownloads)
 if err != nil {
 t.Fatalf("CheckDownloadLimit failed: %v", err)
@@ -1047,11 +1086,19 @@ func TestDownloadTrackingDifferentIPs(t *testing.T) {
 s := setupTestStore(t)
 ctx := context.Background()
 
-// Create test payment
-category, _ := s.CreateCategory(ctx, "Digital", "Digital products")
+category, err := s.CreateCategory(ctx, "Digital", "Digital products")
+if err != nil {
+t.Fatalf("CreateCategory failed: %v", err)
+}
 item := models.NewItem(category.ID, "Test Product", "Description", "100000", "BTC", "digital_media")
-item, _ = s.CreateItem(ctx, item)
-payment, _ := s.CreatePayment(ctx, item.ID, "100000", "BTC")
+item, err = s.CreateItem(ctx, item)
+if err != nil {
+t.Fatalf("CreateItem failed: %v", err)
+}
+payment, err := s.CreatePayment(ctx, item.ID, "100000", "BTC")
+if err != nil {
+t.Fatalf("CreatePayment failed: %v", err)
+}
 
 // Record downloads from different IPs
 ips := []string{"192.168.1.1", "192.168.1.2", "192.168.1.3"}
@@ -1068,24 +1115,34 @@ if err != nil {
 t.Fatalf("GetDownloadCount failed: %v", err)
 }
 if count != 3 {
-t.Errorf("expected download count 3 (one per IP), got %d", count)
+t.Errorf("expected download count 3, got %d", count)
 }
 }
 
-// TestCheckDownloadLimitZeroMax tests behavior with unlimited downloads (0 max).
+// TestCheckDownloadLimitZeroMax tests unlimited downloads (0 max).
 func TestCheckDownloadLimitZeroMax(t *testing.T) {
 s := setupTestStore(t)
 ctx := context.Background()
 
-// Create test payment
-category, _ := s.CreateCategory(ctx, "Digital", "Digital products")
+category, err := s.CreateCategory(ctx, "Digital", "Digital products")
+if err != nil {
+t.Fatalf("CreateCategory failed: %v", err)
+}
 item := models.NewItem(category.ID, "Test Product", "Description", "100000", "BTC", "digital_media")
-item, _ = s.CreateItem(ctx, item)
-payment, _ := s.CreatePayment(ctx, item.ID, "100000", "BTC")
+item, err = s.CreateItem(ctx, item)
+if err != nil {
+t.Fatalf("CreateItem failed: %v", err)
+}
+payment, err := s.CreatePayment(ctx, item.ID, "100000", "BTC")
+if err != nil {
+t.Fatalf("CreatePayment failed: %v", err)
+}
 
 // Record several downloads
 for i := 0; i < 10; i++ {
-s.RecordDownload(ctx, payment.ID, "192.168.1.1", "Mozilla/5.0")
+if err := s.RecordDownload(ctx, payment.ID, "192.168.1.1", "Mozilla/5.0"); err != nil {
+t.Fatalf("RecordDownload failed: %v", err)
+}
 }
 
 // Check with maxDownloads = 0 (unlimited)
