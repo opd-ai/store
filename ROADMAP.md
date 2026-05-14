@@ -80,7 +80,7 @@ From [.github/workflows/ci.yml](.github/workflows/ci.yml):
 | # | Stated Goal (README) | Status | Evidence | Gap Description |
 |---|---------------------|--------|----------|-----------------|
 | 1 | Pluggable Fulfillment Handlers | ✅ **Achieved** | `pkg/handler/registry.go` implements registry; all 4 handlers in `internal/handlers/` follow interface | None |
-| 2 | Cryptocurrency Payments (BTC/XMR via paywall) | ✅ **Achieved** | `pkg/paywall/client.go` wraps opd-ai/paywall API; checkout flow in `internal/api/payment_handlers.go` | Webhook signature verification missing (see Priority 1) |
+| 2 | Cryptocurrency Payments (BTC/XMR via paywall) | ✅ **Achieved** | `pkg/paywall/client.go` wraps opd-ai/paywall API; checkout flow in `internal/api/payment_handlers.go` with webhook signature verification | None |
 | 3 | Admin API (items, categories, tags) | ✅ **Achieved** | Full CRUD in `internal/api/admin_handlers.go`; tested at 62.9% coverage | None |
 | 4 | BoltDB Storage with CRUD | ✅ **Achieved** | `pkg/db/boltdb.go` implements Database interface; 8 buckets initialized | 0% test coverage for db package (see Priority 2) |
 | 5 | RESTful API | ✅ **Achieved** | 19 endpoints in `cmd/store/main.go` (lines 103-233); OpenAPI spec at `docs/api/openapi.yaml` | CORS middleware exists but not rate-limited (see Priority 3) |
@@ -96,7 +96,7 @@ The 777-line DESIGN.md describes additional features not explicitly claimed in R
 
 | Feature | Status | Evidence |
 |---------|--------|----------|
-| Webhook signature verification (HMAC-SHA256) | ❌ **Missing** | `internal/api/webhook_handlers.go:16` accepts webhook without signature check |
+| Webhook signature verification (HMAC-SHA256) | ✅ **Achieved** | `internal/api/webhook_handlers.go` and `pkg/paywall/client.go` implement HMAC-SHA256 verification |
 | Secret encryption in database | ❌ **Missing** | Backend configs with API keys stored as plaintext JSON |
 | S3 pre-signed URL generation | ⚠️ **Partial** | `internal/handlers/digital_media.go:95` has stub `generateS3URLWithSize()` but no AWS session/credentials handling |
 | Rate limiting on checkout | ❌ **Missing** | No middleware for request throttling |
@@ -227,12 +227,12 @@ golangci-lint  # (runs in CI, no failures reported)
 - `pkg/paywall/client.go`
 
 **Tasks**:
-- [ ] Add HMAC-SHA256 signature verification in `WebhookPaymentConfirmed()` handler
-- [ ] Extract `STORE_PAYWALL_WEBHOOK_SECRET` from environment
-- [ ] Validate `X-Webhook-Signature` header matches computed HMAC of request body
-- [ ] Return 401 Unauthorized for invalid signatures
-- [ ] Add test cases for valid/invalid/missing signatures
-- [ ] Document webhook security in README
+- [x] Add HMAC-SHA256 signature verification in `WebhookPaymentConfirmed()` handler
+- [x] Extract `STORE_PAYWALL_WEBHOOK_SECRET` from environment
+- [x] Validate `X-Webhook-Signature` header matches computed HMAC of request body
+- [x] Return 401 Unauthorized for invalid signatures
+- [x] Add test cases for valid/invalid/missing signatures
+- [x] Document webhook security in README
 
 **Acceptance Criteria**:
 - ✅ Webhook handler rejects requests without valid signature
