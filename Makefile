@@ -1,4 +1,4 @@
-.PHONY: help build run test docker-up docker-down docker-logs clean lint fmt vet install-deps generate-key rotate-key
+.PHONY: help build run test docker-up docker-down docker-logs clean lint fmt vet install-deps generate-key rotate-key config-example
 
 help:
 	@echo "opd-ai/store development tasks"
@@ -19,6 +19,7 @@ help:
 	@echo "  make install-deps    - Download dependencies"
 	@echo "  make generate-key    - Generate a new encryption key"
 	@echo "  make rotate-key      - Rotate encryption keys (requires OLD_KEY and NEW_KEY)"
+	@echo "  make config-example  - Copy example config file to config.yaml"
 
 build:
 	@echo "Building store binary..."
@@ -103,3 +104,12 @@ rotate-key:
 	fi
 	@go run ./cmd/rotate-key -old-key="$(OLD_KEY)" -new-key="$(NEW_KEY)"
 
+config-example:
+	@if [ -f config.yaml ]; then \
+		echo "Warning: config.yaml already exists. Not overwriting."; \
+		echo "To create a new config, delete config.yaml first or use: cp config.example.yaml config.yaml"; \
+	else \
+		cp config.example.yaml config.yaml; \
+		echo "Created config.yaml from config.example.yaml"; \
+		echo "Edit config.yaml to customize your configuration"; \
+	fi

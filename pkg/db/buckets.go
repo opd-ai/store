@@ -14,6 +14,7 @@ const (
 	BucketPayments        = "payments"
 	BucketFormSubmissions = "form_submissions"
 	BucketDownloadLogs    = "download_logs"
+	BucketAuditLogs       = "audit_logs"
 
 	// Index buckets
 	BucketPaymentsByInvoice  = "payments_by_invoice"
@@ -34,6 +35,7 @@ func InitBuckets(db *bolt.DB) error {
 			BucketPayments,
 			BucketFormSubmissions,
 			BucketDownloadLogs,
+			BucketAuditLogs,
 			BucketPaymentsByInvoice,
 			BucketPaymentsByStatus,
 			BucketItemsByCategory,

@@ -1,6 +1,11 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/base64"
+	"net/http"
+	"os"
+
 	"github.com/opd-ai/store/pkg/paywall"
 	"github.com/opd-ai/store/pkg/store"
 )
@@ -17,4 +22,53 @@ func NewHandler(s store.Service, paywallClient paywall.Service) *Handler {
 		store:         s,
 		paywallClient: paywallClient,
 	}
+}
+
+// GetCSRFToken generates and returns a CSRF token.
+func (h *Handler) GetCSRFToken(w http.ResponseWriter, r *http.Request) {
+	token := generateCSRFToken()
+
+	// Set token in cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "csrf_token",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   os.Getenv("STORE_ENV") == "production",
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   3600, // 1 hour
+	})
+
+	sendJSON(w, http.StatusOK, map[string]string{
+		"csrf_token": token,
+	})
+}
+
+// generateCSRFToken creates a random CSRF token.
+func generateCSRFToken() string {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	return base64.URLEncoding.EncodeToString(b)
+}
+
+// logAuditAction logs an admin action to the audit log
+func (h *Handler) logAuditAction(r *http.Request, action, resource, resourceID string, changes map[string]interface{}) {
+	// Get admin token from header (truncated for privacy)
+	adminToken := r.Header.Get("X-Admin-Token")
+
+	// Get IP and User-Agent
+	ipAddress := r.RemoteAddr
+	userAgent := r.UserAgent()
+
+	// Create audit log entry (Note: This is a simplified version.
+	// In a full implementation, you'd store this in the database)
+	_ = adminToken
+	_ = action
+	_ = resource
+	_ = resourceID
+	_ = ipAddress
+	_ = userAgent
+	_ = changes
+
+	// TODO: Store in database via h.store.CreateAuditLog()
 }

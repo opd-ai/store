@@ -212,3 +212,37 @@ func NewDownloadLog(paymentID, ipAddress, userAgent string) *DownloadLog {
 		DownloadedAt: time.Now(),
 	}
 }
+
+// AuditLog represents an admin action audit log entry
+type AuditLog struct {
+	ID         string    `json:"id"`
+	Timestamp  time.Time `json:"timestamp"`
+	AdminToken string    `json:"admin_token"` // Hashed or truncated for privacy
+	Action     string    `json:"action"`      // e.g., "create_item", "delete_category", "fulfill_payment"
+	Resource   string    `json:"resource"`    // e.g., "item", "category", "payment"
+	ResourceID string    `json:"resource_id"`
+	Changes    JSONMap   `json:"changes,omitempty"` // Optional: what changed
+	IPAddress  string    `json:"ip_address"`
+	UserAgent  string    `json:"user_agent"`
+}
+
+// NewAuditLog creates a new audit log entry
+func NewAuditLog(adminToken, action, resource, resourceID, ipAddress, userAgent string, changes JSONMap) *AuditLog {
+	// Truncate admin token for privacy (only store first 8 chars)
+	truncatedToken := adminToken
+	if len(truncatedToken) > 8 {
+		truncatedToken = truncatedToken[:8] + "..."
+	}
+
+	return &AuditLog{
+		ID:         NewID(),
+		Timestamp:  time.Now(),
+		AdminToken: truncatedToken,
+		Action:     action,
+		Resource:   resource,
+		ResourceID: resourceID,
+		Changes:    changes,
+		IPAddress:  ipAddress,
+		UserAgent:  userAgent,
+	}
+}

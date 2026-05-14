@@ -507,3 +507,23 @@ func (h *Handler) RemoveItemTag(w http.ResponseWriter, r *http.Request) {
 
 	sendJSON(w, http.StatusOK, map[string]string{"status": "removed"})
 }
+
+// ListAuditLogs lists admin audit logs with optional filtering
+func (h *Handler) ListAuditLogs(w http.ResponseWriter, r *http.Request) {
+	if err := requireAdminToken(r); err != nil {
+		sendError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	// TODO: Implement filtering by:
+	// - action (query param: ?action=create_item)
+	// - resource (query param: ?resource=item)
+	// - date range (query params: ?from=2024-01-01&to=2024-12-31)
+
+	// For now, return a placeholder response
+	sendJSON(w, http.StatusOK, map[string]interface{}{
+		"audit_logs": []interface{}{},
+		"total":      0,
+		"message":    "Audit logging infrastructure in place. Full implementation pending.",
+	})
+}

@@ -156,3 +156,37 @@ func GetRateLimitConfig() (requestsPerMinute, burst int) {
 
 	return requestsPerMinute, burst
 }
+
+// CSRFMiddleware provides CSRF protection for state-changing operations.
+// It generates and validates tokens using the double-submit cookie pattern.
+func CSRFMiddleware(next http.Handler) http.Handler {
+	// Check if CSRF protection is enabled
+	enabled := os.Getenv("STORE_CSRF_ENABLED")
+	if enabled == "false" {
+		// Return a no-op middleware if disabled
+		return next
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Only check CSRF for state-changing methods
+		if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Validate CSRF token
+		token := r.Header.Get("X-CSRF-Token")
+		cookie, err := r.Cookie("csrf_token")
+
+		if err != nil || token == "" || cookie.Value == "" || token != cookie.Value {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": "CSRF token validation failed",
+			})
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}

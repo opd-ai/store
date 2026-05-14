@@ -1,0 +1,69 @@
+# opd-ai/store Configuration File
+# This is an example configuration file showing all available options with their defaults.
+# You can copy this file and customize it for your deployment.
+
+# Server Configuration
+server_port: "8080"
+read_timeout: 10s
+write_timeout: 10s
+shutdown_timeout: 30s
+
+# Database Configuration
+database_path: "./data/store.db"
+
+# Paywall Integration
+# URL of the opd-ai/paywall service
+paywall_url: "http://localhost:8081"
+
+# Webhook key for verifying paywall webhook signatures
+# Generate with: openssl rand -base64 32
+paywall_webhook_key: ""
+
+# Encryption Settings
+# Enable encryption for backend configuration data
+encryption_enabled: true
+
+# Base64-encoded 32-byte encryption key
+# Generate with: openssl rand -base64 32
+encryption_key: ""
+
+# Rate Limiting
+rate_limit_enabled: true
+rate_limit_rpm: 60        # Requests per minute
+rate_limit_burst: 10      # Burst capacity
+
+# CSRF Protection
+# Enable CSRF protection for form submissions
+csrf_enabled: true
+
+# Admin API
+# Authentication token for admin endpoints
+# Generate with: openssl rand -base64 32
+admin_token: ""
+
+# CORS Configuration
+# List of allowed origins for CORS requests
+cors_origins:
+  - "*"  # Allow all origins (not recommended for production)
+  # - "https://example.com"
+  # - "https://app.example.com"
+
+# Example Production Configuration:
+# ---
+# server_port: "8080"
+# read_timeout: 15s
+# write_timeout: 15s
+# shutdown_timeout: 30s
+# database_path: "/var/lib/store/store.db"
+# paywall_url: "https://paywall.yourdomain.com"
+# paywall_webhook_key: "your-webhook-key-here"
+# encryption_enabled: true
+# encryption_key: "your-encryption-key-here"
+# rate_limit_enabled: true
+# rate_limit_rpm: 120
+# rate_limit_burst: 20
+# csrf_enabled: true
+# admin_token: "your-admin-token-here"
+# cors_origins:
+#   - "https://yourdomain.com"
+#   - "https://www.yourdomain.com"

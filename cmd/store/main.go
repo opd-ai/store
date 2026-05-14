@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,20 +13,33 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	bolt "go.etcd.io/bbolt"
 
 	"github.com/opd-ai/store/internal/api"
 	"github.com/opd-ai/store/internal/handlers"
+	"github.com/opd-ai/store/pkg/config"
 	"github.com/opd-ai/store/pkg/crypto"
 	"github.com/opd-ai/store/pkg/db"
 	"github.com/opd-ai/store/pkg/handler"
+	"github.com/opd-ai/store/pkg/metrics"
 	"github.com/opd-ai/store/pkg/paywall"
 	"github.com/opd-ai/store/pkg/store"
 )
 
 func main() {
+	// Parse command-line flags
+	configFile := flag.String("config", "", "path to configuration file (optional)")
+	flag.Parse()
+
 	// Load .env file if present
 	_ = godotenv.Load()
+
+	// Load configuration (CLI flags > env vars > config file > defaults)
+	cfg, err := config.Load(*configFile)
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
 
 	// Ensure required directories exist
 	if err := ensureDirectories(); err != nil {
@@ -33,7 +47,7 @@ func main() {
 	}
 
 	// Initialize database
-	boltDB, err := initDatabase()
+	boltDB, err := initDatabase(cfg.DatabasePath)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
@@ -45,31 +59,26 @@ func main() {
 	}
 
 	// Initialize services
-	apiHandler := initializeServices(boltDB)
+	apiHandler := initializeServices(boltDB, cfg)
 
 	// Setup router with all endpoints
-	router := setupRouter(apiHandler)
+	router := setupRouter(apiHandler, cfg)
 
 	// Server configuration
-	port := os.Getenv("STORE_PORT")
-	if port == "" {
-		port = "8080"
-	}
-
 	server := &http.Server{
-		Addr:         ":" + port,
+		Addr:         ":" + cfg.ServerPort,
 		Handler:      router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  cfg.ReadTimeout,
+		WriteTimeout: cfg.WriteTimeout,
 		IdleTimeout:  60 * time.Second,
 	}
 
-	startServer(server, port)
-	waitForShutdown(server)
+	startServer(server, cfg.ServerPort)
+	waitForShutdown(server, cfg.ShutdownTimeout)
 }
 
 // initializeServices sets up the store service, paywall client, and API handler.
-func initializeServices(boltDB *bolt.DB) *api.Handler {
+func initializeServices(boltDB *bolt.DB, cfg *config.Config) *api.Handler {
 	// Initialize handler registry
 	registry := handler.NewRegistry()
 	if err := registerHandlers(registry); err != nil {
@@ -82,26 +91,24 @@ func initializeServices(boltDB *bolt.DB) *api.Handler {
 	// Initialize store service
 	storeService := store.NewStore(database, registry)
 
-	// Initialize encryption service if encryption key is configured
-	encryptionKey := os.Getenv("STORE_ENCRYPTION_KEY")
-	if encryptionKey != "" {
-		encryption, err := crypto.NewEncryptionServiceFromBase64(encryptionKey)
+	// Initialize encryption service if enabled
+	if cfg.EncryptionEnabled && cfg.EncryptionKey != "" {
+		encryption, err := crypto.NewEncryptionServiceFromBase64(cfg.EncryptionKey)
 		if err != nil {
 			log.Fatalf("Failed to initialize encryption service: %v", err)
 		}
 		storeService.SetEncryption(encryption)
 		log.Println("Encryption enabled for backend configurations")
 	} else {
-		log.Println("Warning: STORE_ENCRYPTION_KEY not set, backend configurations will not be encrypted")
+		log.Println("Warning: Encryption disabled or key not set, backend configurations will not be encrypted")
 	}
 
 	// Initialize paywall client
-	paywallURL := os.Getenv("STORE_PAYWALL_URL")
 	paywallAPIKey := os.Getenv("STORE_PAYWALL_API_KEY")
-	if paywallURL == "" || paywallAPIKey == "" {
+	if cfg.PaywallURL == "" || paywallAPIKey == "" {
 		log.Println("Warning: STORE_PAYWALL_URL or STORE_PAYWALL_API_KEY not set, paywall integration disabled")
 	}
-	paywallClient := paywall.NewClient(paywallURL, paywallAPIKey)
+	paywallClient := paywall.NewClient(cfg.PaywallURL, paywallAPIKey)
 
 	// Initialize API handlers
 	apiHandler := api.NewHandler(storeService, paywallClient)
@@ -110,23 +117,33 @@ func initializeServices(boltDB *bolt.DB) *api.Handler {
 }
 
 // setupRouter configures all routes and middleware.
-func setupRouter(apiHandler *api.Handler) *mux.Router {
+func setupRouter(apiHandler *api.Handler, cfg *config.Config) *mux.Router {
 	router := mux.NewRouter()
-
-	// Get rate limit configuration
-	rateLimitRequests, rateLimitBurst := api.GetRateLimitConfig()
 
 	// Public endpoints
 	router.HandleFunc("/health", api.HealthHandler).Methods("GET")
 	router.HandleFunc("/api/catalog", apiHandler.GetCatalog).Methods("GET")
 	router.HandleFunc("/api/items/{id}", apiHandler.GetItem).Methods("GET")
+	router.HandleFunc("/api/csrf-token", apiHandler.GetCSRFToken).Methods("GET")
 
-	// Checkout endpoint with rate limiting
-	checkoutHandler := api.RateLimitMiddleware(rateLimitRequests, rateLimitBurst)(http.HandlerFunc(apiHandler.CreateCheckout))
-	router.Handle("/api/checkout", checkoutHandler).Methods("POST")
+	// Checkout endpoint with rate limiting if enabled
+	if cfg.RateLimitEnabled {
+		checkoutHandler := api.RateLimitMiddleware(cfg.RateLimitRPM, cfg.RateLimitBurst)(http.HandlerFunc(apiHandler.CreateCheckout))
+		router.Handle("/api/checkout", checkoutHandler).Methods("POST")
+	} else {
+		router.HandleFunc("/api/checkout", apiHandler.CreateCheckout).Methods("POST")
+	}
 
 	router.HandleFunc("/api/payment/{id}/status", apiHandler.GetPaymentStatus).Methods("GET")
-	router.HandleFunc("/api/payment/{id}/submit-form", apiHandler.SubmitPaymentForm).Methods("POST")
+
+	// Form submission with CSRF protection if enabled
+	if cfg.CSRFEnabled {
+		formSubmitHandler := api.CSRFMiddleware(http.HandlerFunc(apiHandler.SubmitPaymentForm))
+		router.Handle("/api/payment/{id}/submit-form", formSubmitHandler).Methods("POST")
+	} else {
+		router.HandleFunc("/api/payment/{id}/submit-form", apiHandler.SubmitPaymentForm).Methods("POST")
+	}
+
 	router.HandleFunc("/api/payment/{id}/download", apiHandler.TrackDownload).Methods("POST")
 
 	// File download endpoint
@@ -141,6 +158,7 @@ func setupRouter(apiHandler *api.Handler) *mux.Router {
 	router.HandleFunc("/admin/payment/{id}/confirm", apiHandler.ConfirmPayment).Methods("POST")
 	router.HandleFunc("/admin/payment/{id}/fulfill", apiHandler.FulfillPayment).Methods("POST")
 	router.HandleFunc("/admin/orders/{payment_id}/status", apiHandler.GetOrderStatus).Methods("GET")
+	router.HandleFunc("/admin/audit-logs", apiHandler.ListAuditLogs).Methods("GET")
 
 	// Register CRUD endpoints for resources
 	registerCRUDEndpoints(router, apiHandler, "categories", apiHandler.CreateCategory, apiHandler.ListCategories, apiHandler.UpdateCategory, apiHandler.DeleteCategory)
@@ -155,7 +173,11 @@ func setupRouter(apiHandler *api.Handler) *mux.Router {
 	docsDir := "./docs/api"
 	router.PathPrefix("/api/docs").Handler(http.StripPrefix("/api/docs", http.FileServer(http.Dir(docsDir)))).Methods("GET")
 
+	// Prometheus metrics endpoint
+	router.Handle("/metrics", promhttp.Handler()).Methods("GET")
+
 	// Middleware
+	router.Use(metrics.HTTPMiddleware) // Metrics collection
 	router.Use(api.CORSMiddleware)
 	router.Use(api.LoggingMiddleware)
 
@@ -173,13 +195,13 @@ func startServer(server *http.Server, port string) {
 }
 
 // waitForShutdown waits for interrupt signal and performs graceful shutdown.
-func waitForShutdown(server *http.Server) {
+func waitForShutdown(server *http.Server, shutdownTimeout time.Duration) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 
 	log.Println("Shutting down server...")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
@@ -209,12 +231,7 @@ func ensureDirectories() error {
 }
 
 // initDatabase initializes the database connection.
-func initDatabase() (*bolt.DB, error) {
-	dbPath := os.Getenv("STORE_DATABASE_PATH")
-	if dbPath == "" {
-		dbPath = "./data/store.db"
-	}
-
+func initDatabase(dbPath string) (*bolt.DB, error) {
 	// Ensure the data directory exists
 	if err := os.MkdirAll("./data", 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
