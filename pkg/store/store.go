@@ -605,49 +605,73 @@ func (s *Store) UpdateItem(ctx context.Context, id string, updates map[string]in
 			return fmt.Errorf("item not found: %w", err)
 		}
 
-		// Apply updates
-		if name, ok := updates["name"].(string); ok {
-			item.Name = name
-		}
-		if description, ok := updates["description"].(string); ok {
-			item.Description = description
-		}
-		if price, ok := updates["price"].(string); ok {
-			item.Price = price
-		}
-		if currency, ok := updates["currency"].(string); ok {
-			item.Currency = currency
-		}
-		if image, ok := updates["image"].(string); ok {
-			item.Image = image
-		}
-		if backendType, ok := updates["backend_type"].(string); ok {
-			item.BackendType = backendType
-		}
-		if backendConfig, ok := updates["backend_config"].(models.JSONMap); ok {
-			item.BackendConfig = backendConfig
-		}
-		if metadata, ok := updates["metadata"].(models.JSONMap); ok {
-			item.Metadata = metadata
-		}
-		if active, ok := updates["active"].(bool); ok {
-			item.Active = active
-		}
-		if categoryID, ok := updates["category_id"].(string); ok {
-			// Update category index
-			if item.CategoryID != "" {
-				db.DeleteIndex(tx, db.BucketItemsByCategory, item.CategoryID+":"+item.ID)
-			}
-			item.CategoryID = categoryID
-			if categoryID != "" {
-				db.AddIndex(tx, db.BucketItemsByCategory, categoryID+":"+item.ID, item.ID)
-			}
+		// Apply updates using helper functions
+		applyBasicFieldUpdates(&item, updates)
+		applyBackendUpdates(&item, updates)
+		if err := applyCategoryUpdate(tx, &item, updates); err != nil {
+			return err
 		}
 
 		item.UpdatedAt = time.Now()
 
 		return db.Put(tx, db.BucketItems, id, &item)
 	})
+}
+
+// applyBasicFieldUpdates applies simple field updates to an item.
+func applyBasicFieldUpdates(item *models.Item, updates map[string]interface{}) {
+	if name, ok := updates["name"].(string); ok {
+		item.Name = name
+	}
+	if description, ok := updates["description"].(string); ok {
+		item.Description = description
+	}
+	if price, ok := updates["price"].(string); ok {
+		item.Price = price
+	}
+	if currency, ok := updates["currency"].(string); ok {
+		item.Currency = currency
+	}
+	if image, ok := updates["image"].(string); ok {
+		item.Image = image
+	}
+	if metadata, ok := updates["metadata"].(models.JSONMap); ok {
+		item.Metadata = metadata
+	}
+	if active, ok := updates["active"].(bool); ok {
+		item.Active = active
+	}
+}
+
+// applyBackendUpdates applies backend-related field updates to an item.
+func applyBackendUpdates(item *models.Item, updates map[string]interface{}) {
+	if backendType, ok := updates["backend_type"].(string); ok {
+		item.BackendType = backendType
+	}
+	if backendConfig, ok := updates["backend_config"].(models.JSONMap); ok {
+		item.BackendConfig = backendConfig
+	}
+}
+
+// applyCategoryUpdate updates the item's category and manages the category index.
+func applyCategoryUpdate(tx *bolt.Tx, item *models.Item, updates map[string]interface{}) error {
+	categoryID, ok := updates["category_id"].(string)
+	if !ok {
+		return nil
+	}
+
+	// Remove old category index
+	if item.CategoryID != "" {
+		db.DeleteIndex(tx, db.BucketItemsByCategory, item.CategoryID+":"+item.ID)
+	}
+
+	// Update category and add new index
+	item.CategoryID = categoryID
+	if categoryID != "" {
+		db.AddIndex(tx, db.BucketItemsByCategory, categoryID+":"+item.ID, item.ID)
+	}
+
+	return nil
 }
 
 // validateBackendUpdate validates backend_type and backend_config changes.

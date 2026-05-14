@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+const (
+	// DefaultHTTPTimeout is the default timeout for HTTP requests to the paywall service.
+	DefaultHTTPTimeout = 30 * time.Second
+)
+
 // Service defines the interface for paywall operations.
 type Service interface {
 	// CreateInvoice creates a new payment invoice.
@@ -59,7 +64,7 @@ func NewClient(baseURL, apiKey string) *Client {
 		baseURL: baseURL,
 		apiKey:  apiKey,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: DefaultHTTPTimeout,
 		},
 	}
 }

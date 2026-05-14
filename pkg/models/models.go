@@ -100,11 +100,11 @@ func (j JSONMap) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements json.Unmarshaler interface.
 func (j *JSONMap) UnmarshalJSON(data []byte) error {
-	var m map[string]interface{}
-	if err := json.Unmarshal(data, &m); err != nil {
+	var jsonMap map[string]interface{}
+	if err := json.Unmarshal(data, &jsonMap); err != nil {
 		return err
 	}
-	*j = JSONMap(m)
+	*j = JSONMap(jsonMap)
 	return nil
 }
 

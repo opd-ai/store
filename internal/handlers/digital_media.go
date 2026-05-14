@@ -13,6 +13,14 @@ import (
 	"github.com/opd-ai/store/pkg/models"
 )
 
+const (
+	// BytesPerMegabyte is the number of bytes in a megabyte.
+	BytesPerMegabyte = 1024 * 1024
+
+	// DefaultExpirationHours is the default expiration time for download URLs in hours.
+	DefaultExpirationHours = 24
+)
+
 // DigitalMediaHandler implements FulfillmentHandler for instant digital downloads.
 // It supports both local filesystem and S3 storage backends.
 type DigitalMediaHandler struct{}
@@ -81,14 +89,14 @@ func (h *DigitalMediaHandler) generateLocalDownloadURL(item *models.Item, config
 func buildFulfillmentResult(downloadURL string, fileSize int64, config handler.Config) map[string]interface{} {
 	expirationHours := config.GetInt("expiration_hours")
 	if expirationHours == 0 {
-		expirationHours = 24
+		expirationHours = DefaultExpirationHours
 	}
 	expiresAt := time.Now().Add(time.Duration(expirationHours) * time.Hour)
 
 	return map[string]interface{}{
 		"download_url":  downloadURL,
 		"expires_at":    expiresAt.Format(time.RFC3339),
-		"file_size_mb":  fileSize / (1024 * 1024),
+		"file_size_mb":  fileSize / BytesPerMegabyte,
 		"max_downloads": config.GetInt("max_downloads"),
 	}
 }
@@ -269,7 +277,7 @@ func getS3Key(item *models.Item, config handler.Config) string {
 func getExpirationDuration(config handler.Config) int {
 	expirationHours := config.GetInt("expiration_hours")
 	if expirationHours == 0 {
-		return 24
+		return DefaultExpirationHours
 	}
 	return expirationHours
 }
