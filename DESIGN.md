@@ -708,12 +708,10 @@ services:
       STORE_DATABASE_PATH: /app/data/store.db
       STORE_PAYWALL_URL: http://paywall:8081
       STORE_ADMIN_TOKEN: supersecret
-      STORE_UPLOADS_DIR: /app/data/uploads
     depends_on:
       - paywall
     volumes:
       - store_data:/app/data
-      - ./templates:/app/templates
 
   paywall:
     image: opd-ai/paywall:latest

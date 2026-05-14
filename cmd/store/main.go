@@ -167,9 +167,7 @@ func waitForShutdown(server *http.Server) {
 
 // ensureDirectories creates required directories if they don't exist.
 func ensureDirectories() error {
-	dirs := []string{
-		os.Getenv("STORE_UPLOADS_DIR"),
-	}
+	dirs := []string{}
 
 	for _, dir := range dirs {
 		if dir == "" {

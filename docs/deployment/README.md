@@ -95,9 +95,6 @@ STORE_ADMIN_TOKEN=your_secure_random_token_here
 # Fulfillment
 STORE_AUTO_FULFILL=true
 
-# Storage (for digital media handler)
-STORE_UPLOADS_DIR=/var/lib/store/uploads
-
 # Logging
 STORE_LOG_LEVEL=info
 STORE_LOG_FORMAT=json
@@ -388,7 +385,6 @@ STORE_PAYWALL_API_KEY=sk_live_xxx
 STORE_PAYWALL_WEBHOOK_SECRET=whsec_xxx
 STORE_ADMIN_TOKEN=xxx
 STORE_AUTO_FULFILL=true
-STORE_UPLOADS_DIR=/var/lib/store/uploads
 STORE_LOG_LEVEL=info
 STORE_LOG_FORMAT=json
 ```

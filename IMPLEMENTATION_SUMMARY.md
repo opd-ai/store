@@ -221,14 +221,6 @@ Orchestrates the payment-to-fulfillment workflow:
   5. Result stored in payment.FulfillmentResult
   6. Database updated atomically
 
-### ✅ Custom CSS/Templates Without Recompilation
-- **Status**: READY
-- **Features**:
-  - Templates load from STORE_TEMPLATES_DIR
-  - Custom functions: i18n(), formatPrice(), qrCode()
-  - Static file serving configured
-  - No Go recompilation needed for template changes
-
 ### ✅ Extensible Architecture
 - **Status**: COMPLETE
 - **Evidence**:
