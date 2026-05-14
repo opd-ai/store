@@ -8,11 +8,11 @@ import (
 // Handler encapsulates HTTP handlers for the store API.
 type Handler struct {
 	store         store.Service
-	paywallClient *paywall.Client
+	paywallClient paywall.Service
 }
 
 // NewHandler creates a new API handler.
-func NewHandler(s store.Service, paywallClient *paywall.Client) *Handler {
+func NewHandler(s store.Service, paywallClient paywall.Service) *Handler {
 	return &Handler{
 		store:         s,
 		paywallClient: paywallClient,

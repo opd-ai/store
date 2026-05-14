@@ -70,14 +70,14 @@ type Service interface {
 // It manages payment creation, confirmation, and handler dispatch.
 type Store struct {
 	boltDB   *bolt.DB
-	registry *handler.Registry
+	registry handler.HandlerRegistry
 }
 
 // Verify that Store implements Service at compile time.
 var _ Service = (*Store)(nil)
 
 // NewStore creates a new Store instance.
-func NewStore(boltDB *bolt.DB, registry *handler.Registry) *Store {
+func NewStore(boltDB *bolt.DB, registry handler.HandlerRegistry) *Store {
 	return &Store{
 		boltDB:   boltDB,
 		registry: registry,

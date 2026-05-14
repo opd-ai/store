@@ -67,14 +67,29 @@ type Field struct {
 	Required bool `json:"required"`
 }
 
+// HandlerRegistry defines the interface for managing fulfillment handlers.
+type HandlerRegistry interface {
+	// Register adds a handler to the registry.
+	Register(handler FulfillmentHandler) error
+
+	// Get retrieves a handler by its type.
+	Get(handlerType string) (FulfillmentHandler, error)
+
+	// All returns metadata for all registered handlers.
+	All() map[string]HandlerMetadata
+}
+
 // Registry manages registered FulfillmentHandlers.
 type Registry struct {
 	handlers map[string]FulfillmentHandler
 	mu       sync.RWMutex
 }
 
+// Verify that Registry implements HandlerRegistry at compile time.
+var _ HandlerRegistry = (*Registry)(nil)
+
 // NewRegistry creates a new handler registry.
-func NewRegistry() *Registry {
+func NewRegistry() HandlerRegistry {
 	return &Registry{
 		handlers: make(map[string]FulfillmentHandler),
 	}

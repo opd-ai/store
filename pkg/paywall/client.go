@@ -13,12 +13,27 @@ import (
 	"time"
 )
 
+// Service defines the interface for paywall operations.
+type Service interface {
+	// CreateInvoice creates a new payment invoice.
+	CreateInvoice(ctx context.Context, amount, currency, callbackURL string) (*Invoice, error)
+
+	// GetInvoiceStatus retrieves the status of a payment invoice.
+	GetInvoiceStatus(ctx context.Context, invoiceID string) (*InvoiceStatus, error)
+
+	// VerifyWebhook verifies a webhook signature.
+	VerifyWebhook(signature string, payload []byte, secret string) (bool, error)
+}
+
 // Client represents a client for the opd-ai/paywall service.
 type Client struct {
 	baseURL    string
 	apiKey     string
 	httpClient *http.Client
 }
+
+// Verify that Client implements Service at compile time.
+var _ Service = (*Client)(nil)
 
 // Invoice represents a payment invoice from the paywall service.
 type Invoice struct {
