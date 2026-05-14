@@ -1678,3 +1678,182 @@ func TestGetCatalog_WithFilters(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
 	}
 }
+
+// TestWebhookPaymentConfirmed_Success tests successful webhook payment confirmation
+func TestWebhookPaymentConfirmed_Success(t *testing.T) {
+	h, s := setupTestHandler(t)
+	ctx := context.Background()
+
+	// Create category and item
+	cat, _ := s.CreateCategory(ctx, "Digital", "Digital products")
+	item := models.NewItem(cat.ID, "Test Product", "Description", "100000", "BTC", "mock")
+	item, _ = s.CreateItem(ctx, item)
+
+	// Create payment
+	payment, _ := s.CreatePayment(ctx, item.ID, "100000", "BTC")
+
+	// Update payment with invoice ID
+	s.UpdatePaymentInvoice(ctx, payment.ID, "test-invoice-123")
+
+	// Create webhook payload
+	payload := map[string]string{
+		"invoice_id": "test-invoice-123",
+		"status":     "confirmed",
+		"tx_hash":    "test-hash-abc",
+		"amount":     "100000",
+		"currency":   "BTC",
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/payment-confirmed", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	h.WebhookPaymentConfirmed(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	// Verify payment was confirmed (and auto-fulfilled)
+	updatedPayment, _ := s.GetPayment(ctx, payment.ID)
+	// With auto-fulfillment enabled (default), status should be "fulfilled"
+	if updatedPayment.Status != "fulfilled" {
+		t.Errorf("expected payment status 'fulfilled', got %s", updatedPayment.Status)
+	}
+	if updatedPayment.PaymentHash == nil || *updatedPayment.PaymentHash != "test-hash-abc" {
+		if updatedPayment.PaymentHash == nil {
+			t.Error("expected payment hash to be set, got nil")
+		} else {
+			t.Errorf("expected payment hash 'test-hash-abc', got %s", *updatedPayment.PaymentHash)
+		}
+	}
+}
+
+// TestWebhookPaymentConfirmed_InvalidPayload tests webhook with invalid JSON
+func TestWebhookPaymentConfirmed_InvalidPayload(t *testing.T) {
+	h, _ := setupTestHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/payment-confirmed", bytes.NewReader([]byte("invalid json")))
+	w := httptest.NewRecorder()
+
+	h.WebhookPaymentConfirmed(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+// TestWebhookPaymentConfirmed_PaymentNotFound tests webhook for non-existent payment
+func TestWebhookPaymentConfirmed_PaymentNotFound(t *testing.T) {
+	h, _ := setupTestHandler(t)
+
+	// Create webhook payload for non-existent invoice
+	payload := map[string]string{
+		"invoice_id": "nonexistent-invoice",
+		"status":     "confirmed",
+		"tx_hash":    "test-hash-abc",
+		"amount":     "100000",
+		"currency":   "BTC",
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/payment-confirmed", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	h.WebhookPaymentConfirmed(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
+	}
+}
+
+// TestWebhookPaymentConfirmed_WithSignature tests webhook signature verification
+func TestWebhookPaymentConfirmed_WithSignature(t *testing.T) {
+	// Set up environment variable for webhook secret
+	oldSecret := os.Getenv("STORE_PAYWALL_WEBHOOK_SECRET")
+	os.Setenv("STORE_PAYWALL_WEBHOOK_SECRET", "test-secret")
+	defer os.Setenv("STORE_PAYWALL_WEBHOOK_SECRET", oldSecret)
+
+	// Create handler with mock paywall client that verifies signatures
+	boltDB := setupTestDB(t)
+	reg := handler.NewRegistry()
+	reg.Register(&mockHandler{})
+	database := db.NewBoltDatabase(boltDB)
+	s := store.NewStore(database, reg)
+
+	mockPW := &mockPaywallClient{
+		verifyWebhookFunc: func(signature string, payload []byte, secret string) (bool, error) {
+			return signature == "valid-signature", nil
+		},
+	}
+	h := NewHandler(s, mockPW)
+	ctx := context.Background()
+
+	// Create test data
+	cat, _ := s.CreateCategory(ctx, "Digital", "Digital products")
+	item := models.NewItem(cat.ID, "Test Product", "Description", "100000", "BTC", "mock")
+	item, _ = s.CreateItem(ctx, item)
+	payment, _ := s.CreatePayment(ctx, item.ID, "100000", "BTC")
+	s.UpdatePaymentInvoice(ctx, payment.ID, "test-invoice-456")
+
+	// Test with valid signature
+	payload := map[string]string{
+		"invoice_id": "test-invoice-456",
+		"status":     "confirmed",
+		"tx_hash":    "test-hash-xyz",
+		"amount":     "100000",
+		"currency":   "BTC",
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/payment-confirmed", bytes.NewReader(body))
+	req.Header.Set("X-Webhook-Signature", "valid-signature")
+	w := httptest.NewRecorder()
+
+	h.WebhookPaymentConfirmed(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d for valid signature, got %d", http.StatusOK, w.Code)
+	}
+}
+
+// TestWebhookPaymentConfirmed_InvalidSignature tests webhook with invalid signature
+func TestWebhookPaymentConfirmed_InvalidSignature(t *testing.T) {
+	// Set up environment variable for webhook secret
+	oldSecret := os.Getenv("STORE_PAYWALL_WEBHOOK_SECRET")
+	os.Setenv("STORE_PAYWALL_WEBHOOK_SECRET", "test-secret")
+	defer os.Setenv("STORE_PAYWALL_WEBHOOK_SECRET", oldSecret)
+
+	// Create handler with mock paywall client
+	boltDB := setupTestDB(t)
+	reg := handler.NewRegistry()
+	reg.Register(&mockHandler{})
+	database := db.NewBoltDatabase(boltDB)
+	s := store.NewStore(database, reg)
+
+	mockPW := &mockPaywallClient{
+		verifyWebhookFunc: func(signature string, payload []byte, secret string) (bool, error) {
+			return false, nil
+		},
+	}
+	h := NewHandler(s, mockPW)
+
+	payload := map[string]string{
+		"invoice_id": "test-invoice",
+		"status":     "confirmed",
+		"tx_hash":    "test-hash",
+		"amount":     "100000",
+		"currency":   "BTC",
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/payment-confirmed", bytes.NewReader(body))
+	req.Header.Set("X-Webhook-Signature", "invalid-signature")
+	w := httptest.NewRecorder()
+
+	h.WebhookPaymentConfirmed(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected status %d for invalid signature, got %d", http.StatusUnauthorized, w.Code)
+	}
+}

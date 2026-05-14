@@ -652,9 +652,18 @@ func TestListTags(t *testing.T) {
 	ctx := context.Background()
 
 	// Create multiple tags
-	tag1, _ := s.CreateTag(ctx, "Go")
-	tag2, _ := s.CreateTag(ctx, "Python")
-	tag3, _ := s.CreateTag(ctx, "Rust")
+	tag1, err := s.CreateTag(ctx, "Go")
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+	tag2, err := s.CreateTag(ctx, "Python")
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+	tag3, err := s.CreateTag(ctx, "Rust")
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
 
 	// List all tags
 	tags, err := s.ListTags(ctx)
@@ -770,15 +779,28 @@ func TestAddItemTag(t *testing.T) {
 	ctx := context.Background()
 
 	// Create category, item, and tag
-	category, _ := s.CreateCategory(ctx, "Books", "Book category")
-	item := models.NewItem(category.ID, "Go Book", "Learn Go", "50000", "BTC", "mock")
-	item.BackendConfig = models.JSONMap{"mock": true}
-	created, _ := s.CreateItem(ctx, item)
+	category, err := s.CreateCategory(ctx, "Books", "Book category")
+	if err != nil {
+		t.Fatalf("CreateCategory failed: %v", err)
+	}
+	item := models.NewItem(category.ID, "Go Book", "Learn Go", "50000", "BTC", "digital_media")
+	item.BackendConfig = models.JSONMap{
+		"storage":          "local",
+		"file_path":        "/downloads/book.pdf",
+		"expiration_hours": 24,
+	}
+	created, err := s.CreateItem(ctx, item)
+	if err != nil {
+		t.Fatalf("CreateItem failed: %v", err)
+	}
 
-	tag, _ := s.CreateTag(ctx, "Programming")
+	tag, err := s.CreateTag(ctx, "Programming")
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
 
 	// Add tag to item
-	err := s.AddItemTag(ctx, created.ID, tag.ID)
+	err = s.AddItemTag(ctx, created.ID, tag.ID)
 	if err != nil {
 		t.Fatalf("AddItemTag failed: %v", err)
 	}
@@ -789,9 +811,12 @@ func TestAddItemTag_ItemNotFound(t *testing.T) {
 	s := setupTestStore(t)
 	ctx := context.Background()
 
-	tag, _ := s.CreateTag(ctx, "Test Tag")
+	tag, err := s.CreateTag(ctx, "Test Tag")
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
 
-	err := s.AddItemTag(ctx, "nonexistent-item", tag.ID)
+	err = s.AddItemTag(ctx, "nonexistent-item", tag.ID)
 	if err == nil {
 		t.Error("expected error when adding tag to non-existent item")
 	}
@@ -802,12 +827,22 @@ func TestAddItemTag_TagNotFound(t *testing.T) {
 	s := setupTestStore(t)
 	ctx := context.Background()
 
-	category, _ := s.CreateCategory(ctx, "Books", "Book category")
-	item := models.NewItem(category.ID, "Go Book", "Learn Go", "50000", "BTC", "mock")
-	item.BackendConfig = models.JSONMap{"mock": true}
-	created, _ := s.CreateItem(ctx, item)
+	category, err := s.CreateCategory(ctx, "Books", "Book category")
+	if err != nil {
+		t.Fatalf("CreateCategory failed: %v", err)
+	}
+	item := models.NewItem(category.ID, "Go Book", "Learn Go", "50000", "BTC", "digital_media")
+	item.BackendConfig = models.JSONMap{
+		"storage":          "local",
+		"file_path":        "/downloads/book.pdf",
+		"expiration_hours": 24,
+	}
+	created, err := s.CreateItem(ctx, item)
+	if err != nil {
+		t.Fatalf("CreateItem failed: %v", err)
+	}
 
-	err := s.AddItemTag(ctx, created.ID, "nonexistent-tag")
+	err = s.AddItemTag(ctx, created.ID, "nonexistent-tag")
 	if err == nil {
 		t.Error("expected error when adding non-existent tag to item")
 	}
@@ -819,18 +854,34 @@ func TestRemoveItemTag(t *testing.T) {
 	ctx := context.Background()
 
 	// Create category, item, and tag
-	category, _ := s.CreateCategory(ctx, "Books", "Book category")
-	item := models.NewItem(category.ID, "Go Book", "Learn Go", "50000", "BTC", "mock")
-	item.BackendConfig = models.JSONMap{"mock": true}
-	created, _ := s.CreateItem(ctx, item)
+	category, err := s.CreateCategory(ctx, "Books", "Book category")
+	if err != nil {
+		t.Fatalf("CreateCategory failed: %v", err)
+	}
+	item := models.NewItem(category.ID, "Go Book", "Learn Go", "50000", "BTC", "digital_media")
+	item.BackendConfig = models.JSONMap{
+		"storage":          "local",
+		"file_path":        "/downloads/book.pdf",
+		"expiration_hours": 24,
+	}
+	created, err := s.CreateItem(ctx, item)
+	if err != nil {
+		t.Fatalf("CreateItem failed: %v", err)
+	}
 
-	tag, _ := s.CreateTag(ctx, "Programming")
+	tag, err := s.CreateTag(ctx, "Programming")
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
 
 	// Add tag to item
-	s.AddItemTag(ctx, created.ID, tag.ID)
+	err = s.AddItemTag(ctx, created.ID, tag.ID)
+	if err != nil {
+		t.Fatalf("AddItemTag failed: %v", err)
+	}
 
 	// Remove tag from item
-	err := s.RemoveItemTag(ctx, created.ID, tag.ID)
+	err = s.RemoveItemTag(ctx, created.ID, tag.ID)
 	if err != nil {
 		t.Fatalf("RemoveItemTag failed: %v", err)
 	}
@@ -841,9 +892,12 @@ func TestRemoveItemTag_ItemNotFound(t *testing.T) {
 	s := setupTestStore(t)
 	ctx := context.Background()
 
-	tag, _ := s.CreateTag(ctx, "Test Tag")
+	tag, err := s.CreateTag(ctx, "Test Tag")
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
 
-	err := s.RemoveItemTag(ctx, "nonexistent-item", tag.ID)
+	err = s.RemoveItemTag(ctx, "nonexistent-item", tag.ID)
 	if err == nil {
 		t.Error("expected error when removing tag from non-existent item")
 	}
@@ -854,12 +908,22 @@ func TestRemoveItemTag_TagNotFound(t *testing.T) {
 	s := setupTestStore(t)
 	ctx := context.Background()
 
-	category, _ := s.CreateCategory(ctx, "Books", "Book category")
-	item := models.NewItem(category.ID, "Go Book", "Learn Go", "50000", "BTC", "mock")
-	item.BackendConfig = models.JSONMap{"mock": true}
-	created, _ := s.CreateItem(ctx, item)
+	category, err := s.CreateCategory(ctx, "Books", "Book category")
+	if err != nil {
+		t.Fatalf("CreateCategory failed: %v", err)
+	}
+	item := models.NewItem(category.ID, "Go Book", "Learn Go", "50000", "BTC", "digital_media")
+	item.BackendConfig = models.JSONMap{
+		"storage":          "local",
+		"file_path":        "/downloads/book.pdf",
+		"expiration_hours": 24,
+	}
+	created, err := s.CreateItem(ctx, item)
+	if err != nil {
+		t.Fatalf("CreateItem failed: %v", err)
+	}
 
-	err := s.RemoveItemTag(ctx, created.ID, "nonexistent-tag")
+	err = s.RemoveItemTag(ctx, created.ID, "nonexistent-tag")
 	if err == nil {
 		t.Error("expected error when removing non-existent tag from item")
 	}
