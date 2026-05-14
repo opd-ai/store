@@ -205,7 +205,7 @@ func initDatabase() (*bolt.DB, error) {
 }
 
 // registerHandlers registers all fulfillment handlers.
-func registerHandlers(registry *handler.Registry) error {
+func registerHandlers(registry handler.HandlerRegistry) error {
 	handlersToRegister := []handler.FulfillmentHandler{
 		handlers.NewDigitalMediaHandler(),
 		handlers.NewShippingFormHandler(),

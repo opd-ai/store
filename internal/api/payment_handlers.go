@@ -14,6 +14,7 @@ import (
 
 	"github.com/opd-ai/store/pkg/models"
 	"github.com/opd-ai/store/pkg/paywall"
+	storesvc "github.com/opd-ai/store/pkg/store"
 )
 
 // CreateCheckout initiates a payment checkout.
@@ -103,7 +104,16 @@ func (h *Handler) GetPaymentStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Poll remote status if payment is pending
-	remoteStatus := h.pollPaywallStatus(r.Context(), payment)
+	remoteStatus := storesvc.PollPaymentStatus(r.Context(), h.paywallClient, payment)
+
+	// If confirmed remotely, update local state
+	if remoteStatus != nil && remoteStatus.Confirmed && payment.Status == "pending" {
+		if err := storesvc.ConfirmAndFulfill(r.Context(), h.store, payment, storesvc.ShouldAutoFulfill()); err != nil {
+			log.Printf("Failed to process confirmation: %v", err)
+		}
+		// Reload payment to get updated status
+		payment, _ = h.store.GetPayment(r.Context(), payment.ID)
+	}
 
 	response := map[string]interface{}{
 		"id":                 payment.ID,
@@ -126,70 +136,6 @@ func (h *Handler) GetPaymentStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sendJSON(w, http.StatusOK, response)
-}
-
-// pollPaywallStatus checks the paywall for payment status and updates local state if needed.
-func (h *Handler) pollPaywallStatus(ctx context.Context, payment *models.Payment) *paywall.InvoiceStatus {
-	// Only poll if payment has invoice ID and is pending
-	if payment.InvoiceID == "" || payment.Status != "pending" {
-		return nil
-	}
-
-	// Get status from paywall
-	status, err := h.paywallClient.GetInvoiceStatus(ctx, payment.InvoiceID)
-	if err != nil {
-		log.Printf("Failed to get invoice status from paywall: %v", err)
-		return nil
-	}
-
-	// If confirmed, update local payment and auto-fulfill if enabled
-	if status.Confirmed {
-		h.handleConfirmedPayment(ctx, payment)
-	}
-
-	return status
-}
-
-// handleConfirmedPayment confirms payment and optionally auto-fulfills.
-func (h *Handler) handleConfirmedPayment(ctx context.Context, payment *models.Payment) {
-	// Confirm payment
-	if err := h.store.ConfirmPayment(ctx, payment.ID, payment.InvoiceID); err != nil {
-		log.Printf("Failed to update payment status: %v", err)
-		return
-	}
-
-	// Reload payment to get updated status
-	h.reloadPayment(ctx, payment)
-
-	// Auto-fulfill if enabled
-	if h.shouldAutoFulfill() {
-		h.attemptAutoFulfill(ctx, payment)
-	}
-}
-
-// reloadPayment updates the payment pointer with the latest data.
-func (h *Handler) reloadPayment(ctx context.Context, payment *models.Payment) {
-	updatedPayment, _ := h.store.GetPayment(ctx, payment.ID)
-	if updatedPayment != nil {
-		*payment = *updatedPayment
-	}
-}
-
-// attemptAutoFulfill tries to fulfill payment and reloads on success.
-func (h *Handler) attemptAutoFulfill(ctx context.Context, payment *models.Payment) {
-	if err := h.store.FulfillPayment(ctx, payment.ID); err != nil {
-		log.Printf("Failed to auto-fulfill payment %s: %v", payment.ID, err)
-		return
-	}
-
-	// Reload payment to get fulfillment result
-	h.reloadPayment(ctx, payment)
-}
-
-// shouldAutoFulfill checks if auto-fulfillment is enabled.
-func (h *Handler) shouldAutoFulfill() bool {
-	autoFulfill := os.Getenv("STORE_AUTO_FULFILL")
-	return autoFulfill == "" || autoFulfill == "true"
 }
 
 // SubmitPaymentForm submits form data for a payment.

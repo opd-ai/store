@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+
+	storesvc "github.com/opd-ai/store/pkg/store"
 )
 
 // WebhookPaymentConfirmed handles payment confirmation webhooks from the paywall service.
@@ -113,7 +115,7 @@ func (h *Handler) processPaymentConfirmation(ctx context.Context, payload *webho
 	}
 	payload.PaymentID = payment.ID
 
-	// Confirm payment
+	// Confirm payment with hash
 	if err := h.store.ConfirmPayment(ctx, payment.ID, payload.PaymentHash); err != nil {
 		return fmt.Errorf("failed to confirm payment %s: %w", payment.ID, err)
 	}
@@ -121,7 +123,7 @@ func (h *Handler) processPaymentConfirmation(ctx context.Context, payload *webho
 	log.Printf("Payment %s confirmed via webhook (invoice: %s, hash: %s)", payment.ID, payload.InvoiceID, payload.PaymentHash)
 
 	// Auto-fulfill if enabled
-	if h.shouldAutoFulfill() {
+	if storesvc.ShouldAutoFulfill() {
 		if err := h.store.FulfillPayment(ctx, payment.ID); err != nil {
 			log.Printf("Failed to auto-fulfill payment %s: %v", payment.ID, err)
 			// Don't return error - payment is confirmed, fulfillment can be retried
