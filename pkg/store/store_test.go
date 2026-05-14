@@ -940,6 +940,11 @@ func TestRecordDownload(t *testing.T) {
 		t.Fatalf("CreateCategory failed: %v", err)
 	}
 	item := models.NewItem(category.ID, "Test Product", "Description", "100000", "BTC", "digital_media")
+	item.BackendConfig = models.JSONMap{
+		"storage":          "local",
+		"file_path":        "/tmp/test.pdf",
+		"expiration_hours": 24,
+	}
 	item, err = s.CreateItem(ctx, item)
 	if err != nil {
 		t.Fatalf("CreateItem failed: %v", err)
@@ -970,12 +975,16 @@ func TestRecordMultipleDownloads(t *testing.T) {
 	s := setupTestStore(t)
 	ctx := context.Background()
 
-	// Create test payment
 	category, err := s.CreateCategory(ctx, "Digital", "Digital products")
 	if err != nil {
 		t.Fatalf("CreateCategory failed: %v", err)
 	}
 	item := models.NewItem(category.ID, "Test Product", "Description", "100000", "BTC", "digital_media")
+	item.BackendConfig = models.JSONMap{
+		"storage":          "local",
+		"file_path":        "/tmp/test.pdf",
+		"expiration_hours": 24,
+	}
 	item, err = s.CreateItem(ctx, item)
 	if err != nil {
 		t.Fatalf("CreateItem failed: %v", err)
@@ -987,8 +996,7 @@ func TestRecordMultipleDownloads(t *testing.T) {
 
 	// Record 5 downloads
 	for i := 0; i < 5; i++ {
-		err := s.RecordDownload(ctx, payment.ID, "192.168.1.1", "Mozilla/5.0")
-		if err != nil {
+		if err := s.RecordDownload(ctx, payment.ID, "192.168.1.1", "Mozilla/5.0"); err != nil {
 			t.Fatalf("RecordDownload failed on iteration %d: %v", i, err)
 		}
 	}
@@ -1013,6 +1021,11 @@ func TestCheckDownloadLimit(t *testing.T) {
 		t.Fatalf("CreateCategory failed: %v", err)
 	}
 	item := models.NewItem(category.ID, "Test Product", "Description", "100000", "BTC", "digital_media")
+	item.BackendConfig = models.JSONMap{
+		"storage":          "local",
+		"file_path":        "/tmp/test.pdf",
+		"expiration_hours": 24,
+	}
 	item, err = s.CreateItem(ctx, item)
 	if err != nil {
 		t.Fatalf("CreateItem failed: %v", err)
@@ -1051,6 +1064,11 @@ func TestCheckDownloadLimitNotExceeded(t *testing.T) {
 		t.Fatalf("CreateCategory failed: %v", err)
 	}
 	item := models.NewItem(category.ID, "Test Product", "Description", "100000", "BTC", "digital_media")
+	item.BackendConfig = models.JSONMap{
+		"storage":          "local",
+		"file_path":        "/tmp/test.pdf",
+		"expiration_hours": 24,
+	}
 	item, err = s.CreateItem(ctx, item)
 	if err != nil {
 		t.Fatalf("CreateItem failed: %v", err)
@@ -1089,6 +1107,11 @@ func TestDownloadTrackingDifferentIPs(t *testing.T) {
 		t.Fatalf("CreateCategory failed: %v", err)
 	}
 	item := models.NewItem(category.ID, "Test Product", "Description", "100000", "BTC", "digital_media")
+	item.BackendConfig = models.JSONMap{
+		"storage":          "local",
+		"file_path":        "/tmp/test.pdf",
+		"expiration_hours": 24,
+	}
 	item, err = s.CreateItem(ctx, item)
 	if err != nil {
 		t.Fatalf("CreateItem failed: %v", err)
@@ -1101,8 +1124,7 @@ func TestDownloadTrackingDifferentIPs(t *testing.T) {
 	// Record downloads from different IPs
 	ips := []string{"192.168.1.1", "192.168.1.2", "192.168.1.3"}
 	for _, ip := range ips {
-		err := s.RecordDownload(ctx, payment.ID, ip, "Mozilla/5.0")
-		if err != nil {
+		if err := s.RecordDownload(ctx, payment.ID, ip, "Mozilla/5.0"); err != nil {
 			t.Fatalf("RecordDownload failed for IP %s: %v", ip, err)
 		}
 	}
@@ -1127,6 +1149,11 @@ func TestCheckDownloadLimitZeroMax(t *testing.T) {
 		t.Fatalf("CreateCategory failed: %v", err)
 	}
 	item := models.NewItem(category.ID, "Test Product", "Description", "100000", "BTC", "digital_media")
+	item.BackendConfig = models.JSONMap{
+		"storage":          "local",
+		"file_path":        "/tmp/test.pdf",
+		"expiration_hours": 24,
+	}
 	item, err = s.CreateItem(ctx, item)
 	if err != nil {
 		t.Fatalf("CreateItem failed: %v", err)
