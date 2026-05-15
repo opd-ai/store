@@ -337,20 +337,29 @@ func (h *Handler) ServeDownload(w http.ResponseWriter, r *http.Request) {
 		storage = s
 	}
 
-	// For S3, redirect to pre-signed URL
+	// Route to appropriate storage handler
 	if storage == "s3" {
-		downloadURL, ok := payment.FulfillmentResult["download_url"].(string)
-		if !ok || downloadURL == "" {
-			sendError(w, http.StatusInternalServerError, "Download URL not available")
-			return
-		}
-		http.Redirect(w, r, downloadURL, http.StatusTemporaryRedirect)
-		// Record download after redirect
-		_ = h.store.RecordDownload(r.Context(), paymentID, r.RemoteAddr, r.UserAgent())
+		h.serveS3Download(w, r, payment, paymentID)
+	} else {
+		h.serveLocalFile(w, r, config, paymentID)
+	}
+}
+
+// serveS3Download redirects to an S3 pre-signed URL.
+func (h *Handler) serveS3Download(w http.ResponseWriter, r *http.Request, payment *models.Payment, paymentID string) {
+	downloadURL, ok := payment.FulfillmentResult["download_url"].(string)
+	if !ok || downloadURL == "" {
+		sendError(w, http.StatusInternalServerError, "Download URL not available")
 		return
 	}
+	http.Redirect(w, r, downloadURL, http.StatusTemporaryRedirect)
+	// Record download after redirect
+	_ = h.store.RecordDownload(r.Context(), paymentID, r.RemoteAddr, r.UserAgent())
+}
 
-	// For local storage, serve the file
+// serveLocalFile serves a file from local storage.
+func (h *Handler) serveLocalFile(w http.ResponseWriter, r *http.Request, config models.JSONMap, paymentID string) {
+	// Get file path from config
 	filePath, ok := config["file_path"].(string)
 	if !ok || filePath == "" {
 		sendError(w, http.StatusInternalServerError, "File path not configured")

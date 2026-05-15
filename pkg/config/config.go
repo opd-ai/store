@@ -13,7 +13,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/spf13/viper"
@@ -82,9 +81,10 @@ func Load(configFile string) (*Config, error) {
 	// Set defaults
 	setDefaults(v)
 
-	// Set up environment variable reading
+	// Set up environment variable reading with explicit bindings
 	v.SetEnvPrefix("STORE")
 	v.AutomaticEnv()
+	bindEnvironmentVariables(v)
 
 	// Load config file if specified
 	if configFile != "" {
@@ -95,14 +95,11 @@ func Load(configFile string) (*Config, error) {
 	}
 
 	// Unmarshal into Config struct
+	// Environment variables take precedence due to viper's priority order
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("error unmarshaling config: %w", err)
 	}
-
-	// Override with environment variables if present
-	// This ensures ENV vars take precedence over config file
-	applyEnvironmentOverrides(&cfg)
 
 	return &cfg, nil
 }
@@ -162,101 +159,67 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("pod_polling_interval", 1*time.Hour)
 }
 
-// applyEnvironmentOverrides ensures environment variables take precedence
-func applyEnvironmentOverrides(cfg *Config) {
-	// Server settings
-	if port := os.Getenv("STORE_PORT"); port != "" {
-		cfg.ServerPort = port
+// bindEnvironmentVariables explicitly binds environment variables to config keys
+// This ensures STORE_* env vars are properly mapped to config struct fields
+func bindEnvironmentVariables(v *viper.Viper) {
+	// Map of environment variable suffix to config key
+	envBindings := map[string]string{
+		// Server settings
+		"PORT":             "server_port",
+		"READ_TIMEOUT":     "read_timeout",
+		"WRITE_TIMEOUT":    "write_timeout",
+		"SHUTDOWN_TIMEOUT": "shutdown_timeout",
+
+		// Database settings
+		"DB_PATH":       "database_path",
+		"DATABASE_PATH": "database_path",
+
+		// Embedded Paywall settings
+		"PAYWALL_TESTNET":           "paywall_testnet",
+		"PAYWALL_DB_PATH":           "paywall_db_path",
+		"PAYWALL_TIMEOUT":           "paywall_timeout",
+		"PAYWALL_MIN_CONFIRMATIONS": "paywall_min_confirmations",
+
+		// Payment modes
+		"PAYMENT_MODE_DIGITAL":  "payment_mode_digital",
+		"PAYMENT_MODE_SHIPPING": "payment_mode_shipping",
+		"PAYMENT_MODE_POD":      "payment_mode_pod",
+
+		// Multisig/Escrow settings
+		"MULTISIG_ENABLED":        "multisig_enabled",
+		"SELLER_PUBLIC_KEY":       "seller_public_key",
+		"ARBITER_PUBLIC_KEY":      "arbiter_public_key",
+		"SELLER_PRIVATE_KEY":      "seller_private_key",
+		"ESCROW_TIMEOUT_PHYSICAL": "escrow_timeout_physical",
+
+		// Encryption settings
+		"ENCRYPTION_ENABLED": "encryption_enabled",
+		"ENCRYPTION_KEY":     "encryption_key",
+
+		// Rate limiting
+		"RATE_LIMIT_ENABLED": "rate_limit_enabled",
+		"RATE_LIMIT_RPM":     "rate_limit_rpm",
+		"RATE_LIMIT_BURST":   "rate_limit_burst",
+
+		// CSRF protection
+		"CSRF_ENABLED": "csrf_enabled",
+
+		// Admin API
+		"ADMIN_TOKEN": "admin_token",
+
+		// Audit log settings
+		"AUDIT_LOG_RETENTION_DAYS": "audit_log_retention_days",
+
+		// CORS settings
+		"CORS_ORIGINS": "cors_origins",
+
+		// Background job settings
+		"POD_POLLING_ENABLED":  "pod_polling_enabled",
+		"POD_POLLING_INTERVAL": "pod_polling_interval",
 	}
 
-	// Database settings
-	if dbPath := os.Getenv("STORE_DB_PATH"); dbPath != "" {
-		cfg.DatabasePath = dbPath
-	}
-
-	// Embedded Paywall settings
-	if testnet := os.Getenv("STORE_PAYWALL_TESTNET"); testnet != "" {
-		cfg.PaywallTestnet = testnet != "false"
-	}
-	if pwDBPath := os.Getenv("STORE_PAYWALL_DB_PATH"); pwDBPath != "" {
-		cfg.PaywallDBPath = pwDBPath
-	}
-	if pwTimeout := os.Getenv("STORE_PAYWALL_TIMEOUT"); pwTimeout != "" {
-		if duration, err := time.ParseDuration(pwTimeout); err == nil {
-			cfg.PaywallTimeout = duration
-		}
-	}
-
-	// Payment mode settings
-	if modeDigital := os.Getenv("STORE_PAYMENT_MODE_DIGITAL"); modeDigital != "" {
-		cfg.PaymentModeDigital = modeDigital
-	}
-	if modeShipping := os.Getenv("STORE_PAYMENT_MODE_SHIPPING"); modeShipping != "" {
-		cfg.PaymentModeShipping = modeShipping
-	}
-	if modePOD := os.Getenv("STORE_PAYMENT_MODE_POD"); modePOD != "" {
-		cfg.PaymentModePOD = modePOD
-	}
-
-	// Multisig/Escrow settings
-	if multisigEnabled := os.Getenv("STORE_MULTISIG_ENABLED"); multisigEnabled != "" {
-		cfg.MultisigEnabled = multisigEnabled != "false"
-	}
-	if sellerPubKey := os.Getenv("STORE_SELLER_PUBLIC_KEY"); sellerPubKey != "" {
-		cfg.SellerPublicKey = sellerPubKey
-	}
-	if arbiterPubKey := os.Getenv("STORE_ARBITER_PUBLIC_KEY"); arbiterPubKey != "" {
-		cfg.ArbiterPublicKey = arbiterPubKey
-	}
-	if sellerPrivKey := os.Getenv("STORE_SELLER_PRIVATE_KEY"); sellerPrivKey != "" {
-		cfg.SellerPrivateKey = sellerPrivKey
-	}
-	if escrowTimeout := os.Getenv("STORE_ESCROW_TIMEOUT_PHYSICAL"); escrowTimeout != "" {
-		if duration, err := time.ParseDuration(escrowTimeout); err == nil {
-			cfg.EscrowTimeoutPhysical = duration
-		}
-	}
-
-	// Encryption settings
-	if encEnabled := os.Getenv("STORE_ENCRYPTION_ENABLED"); encEnabled != "" {
-		cfg.EncryptionEnabled = encEnabled != "false"
-	}
-	if encKey := os.Getenv("STORE_ENCRYPTION_KEY"); encKey != "" {
-		cfg.EncryptionKey = encKey
-	}
-
-	// Rate limiting
-	if rlEnabled := os.Getenv("STORE_RATE_LIMIT_ENABLED"); rlEnabled != "" {
-		cfg.RateLimitEnabled = rlEnabled != "false"
-	}
-	if rlRPM := os.Getenv("STORE_RATE_LIMIT_RPM"); rlRPM != "" {
-		fmt.Sscanf(rlRPM, "%d", &cfg.RateLimitRPM)
-	}
-	if rlBurst := os.Getenv("STORE_RATE_LIMIT_BURST"); rlBurst != "" {
-		fmt.Sscanf(rlBurst, "%d", &cfg.RateLimitBurst)
-	}
-
-	// CSRF protection
-	if csrfEnabled := os.Getenv("STORE_CSRF_ENABLED"); csrfEnabled != "" {
-		cfg.CSRFEnabled = csrfEnabled != "false"
-	}
-
-	// Admin token
-	if adminToken := os.Getenv("STORE_ADMIN_TOKEN"); adminToken != "" {
-		cfg.AdminToken = adminToken
-	}
-
-	// Background jobs
-	if pollingEnabled := os.Getenv("STORE_POD_POLLING_ENABLED"); pollingEnabled != "" {
-		cfg.PoDPollingEnabled = pollingEnabled != "false"
-	}
-	if pollingInterval := os.Getenv("STORE_POD_POLLING_INTERVAL"); pollingInterval != "" {
-		if duration, err := time.ParseDuration(pollingInterval); err == nil {
-			cfg.PoDPollingInterval = duration
-		}
-	}
-	// Audit log retention
-	if retentionDays := os.Getenv("STORE_AUDIT_LOG_RETENTION_DAYS"); retentionDays != "" {
-		fmt.Sscanf(retentionDays, "%d", &cfg.AuditLogRetentionDays)
+	// Bind each environment variable
+	for envSuffix, configKey := range envBindings {
+		v.BindEnv(configKey, "STORE_"+envSuffix)
 	}
 }

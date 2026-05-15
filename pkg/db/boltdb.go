@@ -1,3 +1,8 @@
+// Package db provides database abstraction for the store.
+// It implements a key-value database interface using BoltDB with support for
+// namespaced buckets (categories, items, payments, tags, forms, downloads, audit logs).
+//
+// Key types: Database, BoltDatabase.
 package db
 
 import (

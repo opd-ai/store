@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	bolt "go.etcd.io/bbolt"
@@ -19,7 +20,10 @@ func setupTestDB(t *testing.T) *bolt.DB {
 	t.Helper()
 
 	// Create a temporary database file
-	tmpFile := "/tmp/test_store_" + t.Name() + ".db"
+	// Replace slashes in test names for subtests
+	testName := t.Name()
+	testName = strings.ReplaceAll(testName, "/", "_")
+	tmpFile := "/tmp/test_store_" + testName + ".db"
 	t.Cleanup(func() {
 		os.Remove(tmpFile)
 	})

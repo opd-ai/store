@@ -757,7 +757,7 @@ func (s *Store) validateBackendUpdate(ctx context.Context, itemID string, update
 		return nil
 	}
 
-	validationType, err := s.determineValidationType(ctx, itemID, backendType, hasType)
+	validationType, err := s.DetermineValidationType(ctx, itemID, backendType, hasType)
 	if err != nil {
 		return err
 	}
@@ -767,7 +767,7 @@ func (s *Store) validateBackendUpdate(ctx context.Context, itemID string, update
 		return fmt.Errorf("invalid backend_type %q: handler not registered", validationType)
 	}
 
-	configToValidate, err := s.determineConfigToValidate(ctx, itemID, backendConfig, hasConfig)
+	configToValidate, err := s.DetermineConfigToValidate(ctx, itemID, backendConfig, hasConfig)
 	if err != nil {
 		return err
 	}
@@ -779,8 +779,10 @@ func (s *Store) validateBackendUpdate(ctx context.Context, itemID string, update
 	return nil
 }
 
-// determineValidationType returns the backend type to use for validation.
-func (s *Store) determineValidationType(ctx context.Context, itemID, backendType string, hasType bool) (string, error) {
+// DetermineValidationType returns the backend type to use for validation.
+// If hasType is true, it returns the provided backendType. Otherwise, it fetches
+// the type from the existing item.
+func (s *Store) DetermineValidationType(ctx context.Context, itemID, backendType string, hasType bool) (string, error) {
 	if hasType {
 		return backendType, nil
 	}
@@ -793,8 +795,10 @@ func (s *Store) determineValidationType(ctx context.Context, itemID, backendType
 	return item.BackendType, nil
 }
 
-// determineConfigToValidate returns the backend config to validate.
-func (s *Store) determineConfigToValidate(ctx context.Context, itemID string, backendConfig models.JSONMap, hasConfig bool) (models.JSONMap, error) {
+// DetermineConfigToValidate returns the backend config to validate.
+// If hasConfig is true, it returns the provided backendConfig. Otherwise, it fetches
+// the config from the existing item.
+func (s *Store) DetermineConfigToValidate(ctx context.Context, itemID string, backendConfig models.JSONMap, hasConfig bool) (models.JSONMap, error) {
 	if hasConfig {
 		return backendConfig, nil
 	}
