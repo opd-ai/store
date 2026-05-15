@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,6 +10,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"github.com/opd-ai/store/pkg/models"
+	"github.com/opd-ai/store/pkg/paywall"
 )
 
 // SubmitShippingAddress handles shipping address collection for escrow payments.
@@ -155,13 +158,41 @@ func (h *Handler) ReleaseEscrow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Verify signatures with paywall service
-	// err = h.paywallClient.ReleaseEscrow(r.Context(), paymentID, signatures)
+	// Convert to paywall signature format
+	signatures := make([]paywall.SignatureData, len(req.Signatures))
+	for i, sig := range req.Signatures {
+		// Decode hex-encoded signature and public key
+		sigBytes, err := hex.DecodeString(sig.Signature)
+		if err != nil {
+			sendError(w, http.StatusBadRequest, fmt.Sprintf("Invalid signature format: %v", err))
+			return
+		}
+		pubKeyBytes, err := hex.DecodeString(sig.PublicKey)
+		if err != nil {
+			sendError(w, http.StatusBadRequest, fmt.Sprintf("Invalid public key format: %v", err))
+			return
+		}
 
-	// Update payment state
-	if err := h.store.UpdateEscrowState(r.Context(), paymentID, "released", nil); err != nil {
-		sendError(w, http.StatusInternalServerError, "Failed to release escrow")
+		signatures[i] = paywall.SignatureData{
+			SignerID:  sig.SignerID,
+			Role:      sig.SignerRole,
+			Signature: sigBytes,
+			PublicKey: pubKeyBytes,
+			SignedAt:  sig.SignedAt,
+		}
+	}
+
+	// Verify signatures with paywall service and broadcast transaction
+	if err := h.paywallClient.ReleaseEscrow(r.Context(), paymentID, signatures); err != nil {
+		sendError(w, http.StatusBadRequest, fmt.Sprintf("Failed to release escrow: %v", err))
 		return
+	}
+
+	// Update payment state (only after successful blockchain transaction)
+	if err := h.store.UpdateEscrowState(r.Context(), paymentID, "released", nil); err != nil {
+		// Log error - blockchain tx already broadcast, state update is secondary
+		fmt.Printf("WARNING: Escrow released on blockchain but failed to update database state: %v\n", err)
+		// Still return success to user since funds were released
 	}
 
 	// Store signatures
@@ -217,13 +248,41 @@ func (h *Handler) RefundEscrow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Verify signatures and execute refund with paywall service
-	// err = h.paywallClient.RefundEscrow(r.Context(), paymentID, signatures)
+	// Convert to paywall signature format
+	signatures := make([]paywall.SignatureData, len(req.Signatures))
+	for i, sig := range req.Signatures {
+		// Decode hex-encoded signature and public key
+		sigBytes, err := hex.DecodeString(sig.Signature)
+		if err != nil {
+			sendError(w, http.StatusBadRequest, fmt.Sprintf("Invalid signature format: %v", err))
+			return
+		}
+		pubKeyBytes, err := hex.DecodeString(sig.PublicKey)
+		if err != nil {
+			sendError(w, http.StatusBadRequest, fmt.Sprintf("Invalid public key format: %v", err))
+			return
+		}
 
-	// Update payment state
-	if err := h.store.UpdateEscrowState(r.Context(), paymentID, "refunded", nil); err != nil {
-		sendError(w, http.StatusInternalServerError, "Failed to refund escrow")
+		signatures[i] = paywall.SignatureData{
+			SignerID:  sig.SignerID,
+			Role:      sig.SignerRole,
+			Signature: sigBytes,
+			PublicKey: pubKeyBytes,
+			SignedAt:  sig.SignedAt,
+		}
+	}
+
+	// Verify signatures and execute refund with paywall service
+	if err := h.paywallClient.RefundEscrow(r.Context(), paymentID, signatures); err != nil {
+		sendError(w, http.StatusBadRequest, fmt.Sprintf("Failed to refund escrow: %v", err))
 		return
+	}
+
+	// Update payment state (only after successful blockchain transaction)
+	if err := h.store.UpdateEscrowState(r.Context(), paymentID, "refunded", nil); err != nil {
+		// Log error - blockchain tx already broadcast, state update is secondary
+		fmt.Printf("WARNING: Escrow refunded on blockchain but failed to update database state: %v\n", err)
+		// Still return success to user since funds were refunded
 	}
 
 	sendJSON(w, http.StatusOK, map[string]interface{}{
@@ -372,6 +431,9 @@ func validateShippingInfo(info map[string]interface{}) error {
 
 func (h *Handler) isAuthorizedAdmin(r *http.Request) bool {
 	token := r.Header.Get("X-Admin-Token")
-	// TODO: Implement proper admin token validation
-	return token != ""
+	if token == "" || h.adminToken == "" {
+		return false
+	}
+	// Use constant-time comparison to prevent timing attacks
+	return subtle.ConstantTimeCompare([]byte(token), []byte(h.adminToken)) == 1
 }

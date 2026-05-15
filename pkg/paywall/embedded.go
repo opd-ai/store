@@ -7,26 +7,29 @@ import (
 	"encoding/hex"
 	"fmt"
 	"time"
+
+	pw "github.com/opd-ai/paywall"
+	"github.com/opd-ai/paywall/wallet"
 )
 
 // EmbeddedConfig holds configuration for the embedded paywall.
 type EmbeddedConfig struct {
-	TestNet             bool
-	DBPath              string
-	PaymentTimeout      time.Duration
-	MinConfirmations    int
-	MultisigEnabled     bool
-	SellerPubKey        []byte
-	ArbiterPubKey       []byte
-	SellerPrivateKey    []byte
+	TestNet               bool
+	DBPath                string
+	PaymentTimeout        time.Duration
+	MinConfirmations      int
+	MultisigEnabled       bool
+	SellerPubKey          []byte
+	ArbiterPubKey         []byte
+	SellerPrivateKey      []byte
 	EscrowTimeoutPhysical time.Duration
 }
 
 // EmbeddedPaywall wraps the direct paywall library for embedded integration.
 type EmbeddedPaywall struct {
-	config        *EmbeddedConfig
-	// Note: Actual paywall library instance would be stored here
-	// For now, we're creating the interface structure
+	config          *EmbeddedConfig
+	paywall         *pw.Paywall
+	escrowManager   *pw.EscrowManager
 	multisigEnabled bool
 }
 
@@ -43,32 +46,52 @@ func NewEmbeddedPaywall(cfg EmbeddedConfig) (*EmbeddedPaywall, error) {
 		}
 	}
 
-	// TODO: Initialize actual paywall library instance
-	// pwConfig := &paywall.Config{
-	//     PriceInBTC:      0, // Will be set per-payment
-	//     TestNet:         cfg.TestNet,
-	//     Store:           paywall.NewBoltStore(cfg.DBPath),
-	//     PaymentTimeout:  cfg.PaymentTimeout,
-	//     MinConfirmations: cfg.MinConfirmations,
-	// }
-	//
-	// if cfg.MultisigEnabled {
-	//     pwConfig.MultisigEnabled = true
-	//     pwConfig.MultisigRequired = 2
-	//     pwConfig.MultisigTotal = 3
-	//     pwConfig.ParticipantPubKeys = map[wallet.WalletType][][]byte{
-	//         wallet.Bitcoin: {buyerKey, cfg.SellerPubKey, cfg.ArbiterPubKey},
-	//     }
-	//     pwConfig.MultisigRole = paywall.RoleSeller
-	// }
-	//
-	// pw, err := paywall.NewPaywall(*pwConfig)
-	// if err != nil {
-	//     return nil, err
-	// }
+	// Initialize actual paywall library instance
+	pwConfig := &pw.Config{
+		PriceInBTC:       0.0001, // Minimal price; actual price set per-payment in CreateInvoice
+		TestNet:          cfg.TestNet,
+		Store:            pw.NewFileStore(cfg.DBPath),
+		PaymentTimeout:   cfg.PaymentTimeout,
+		MinConfirmations: cfg.MinConfirmations,
+	}
+
+	if cfg.MultisigEnabled {
+		pwConfig.MultisigEnabled = true
+		pwConfig.MultisigRequired = 2
+		pwConfig.MultisigTotal = 3
+		// Buyer key will be provided per-payment when address is generated
+		// Set up participant keys with seller and arbiter (buyer added later)
+		pwConfig.ParticipantPubKeys = map[wallet.WalletType][][]byte{
+			wallet.Bitcoin: {nil, cfg.SellerPubKey, cfg.ArbiterPubKey},
+		}
+		pwConfig.MultisigRole = pw.RoleSeller
+		pwConfig.AuthorizedArbiters = [][]byte{cfg.ArbiterPubKey}
+
+		// Set escrow timeout configuration
+		if cfg.EscrowTimeoutPhysical > 0 {
+			pwConfig.MinEscrowTimeout = 24 * time.Hour
+			pwConfig.MaxEscrowTimeout = cfg.EscrowTimeoutPhysical
+		}
+	}
+
+	paywallInstance, err := pw.NewPaywall(*pwConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize paywall: %w", err)
+	}
+
+	// Initialize escrow manager if multisig is enabled
+	var escrowManager *pw.EscrowManager
+	if cfg.MultisigEnabled {
+		escrowManager, err = pw.NewEscrowManager(paywallInstance)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize escrow manager: %w", err)
+		}
+	}
 
 	return &EmbeddedPaywall{
 		config:          &cfg,
+		paywall:         paywallInstance,
+		escrowManager:   escrowManager,
 		multisigEnabled: cfg.MultisigEnabled,
 	}, nil
 }
@@ -91,7 +114,7 @@ func validateMultisigConfig(cfg *EmbeddedConfig) error {
 func (e *EmbeddedPaywall) CreateInvoice(ctx context.Context, amount, currency, callbackURL string) (*Invoice, error) {
 	// For backward compatibility with existing code, we create an invoice in the old format
 	// This is a simplified implementation that would need to interact with the actual paywall library
-	
+
 	paymentID := generatePaymentID()
 	address := generateAddress(currency, e.config.TestNet)
 	expiresAt := time.Now().Add(e.config.PaymentTimeout)
@@ -166,7 +189,7 @@ func (e *EmbeddedPaywall) GetEmbeddedPayment(ctx context.Context, paymentID stri
 
 // ReleaseEscrow releases escrowed funds to the seller.
 func (e *EmbeddedPaywall) ReleaseEscrow(ctx context.Context, paymentID string, signatures []SignatureData) error {
-	if !e.multisigEnabled {
+	if !e.multisigEnabled || e.escrowManager == nil {
 		return fmt.Errorf("escrow not enabled")
 	}
 
@@ -174,13 +197,35 @@ func (e *EmbeddedPaywall) ReleaseEscrow(ctx context.Context, paymentID string, s
 		return fmt.Errorf("insufficient signatures: need 2, got %d", len(signatures))
 	}
 
-	// TODO: Verify signatures and broadcast transaction
-	return nil
+	// Convert to paywall library signature format and identify buyer/seller signatures
+	var buyerSig, sellerSig *pw.SignatureData
+	for i := range signatures {
+		pwSig := &pw.SignatureData{
+			SignerID:  signatures[i].SignerID,
+			Role:      pw.MultisigRole(signatures[i].Role),
+			Signature: signatures[i].Signature,
+			PublicKey: signatures[i].PublicKey,
+			SignedAt:  signatures[i].SignedAt,
+		}
+
+		if signatures[i].Role == "buyer" {
+			buyerSig = pwSig
+		} else if signatures[i].Role == "seller" {
+			sellerSig = pwSig
+		}
+	}
+
+	if buyerSig == nil || sellerSig == nil {
+		return fmt.Errorf("missing buyer or seller signature")
+	}
+
+	// Call escrow manager to release funds
+	return e.escrowManager.ReleaseToSeller(paymentID, buyerSig, sellerSig)
 }
 
 // RefundEscrow refunds escrowed funds to the buyer.
 func (e *EmbeddedPaywall) RefundEscrow(ctx context.Context, paymentID string, signatures []SignatureData) error {
-	if !e.multisigEnabled {
+	if !e.multisigEnabled || e.escrowManager == nil {
 		return fmt.Errorf("escrow not enabled")
 	}
 
@@ -188,28 +233,64 @@ func (e *EmbeddedPaywall) RefundEscrow(ctx context.Context, paymentID string, si
 		return fmt.Errorf("insufficient signatures: need 2, got %d", len(signatures))
 	}
 
-	// TODO: Verify signatures and broadcast refund transaction
-	return nil
+	// Convert to paywall library signature format
+	var sig1, sig2 *pw.SignatureData
+	for i := range signatures {
+		pwSig := &pw.SignatureData{
+			SignerID:  signatures[i].SignerID,
+			Role:      pw.MultisigRole(signatures[i].Role),
+			Signature: signatures[i].Signature,
+			PublicKey: signatures[i].PublicKey,
+			SignedAt:  signatures[i].SignedAt,
+		}
+
+		if i == 0 {
+			sig1 = pwSig
+		} else if i == 1 {
+			sig2 = pwSig
+		}
+	}
+
+	if sig1 == nil || sig2 == nil {
+		return fmt.Errorf("need exactly 2 signatures")
+	}
+
+	// Call escrow manager to refund
+	return e.escrowManager.RefundBuyer(paymentID, sig1, sig2)
 }
 
 // DisputeEscrow marks a payment as disputed.
 func (e *EmbeddedPaywall) DisputeEscrow(ctx context.Context, paymentID string, reason string) error {
-	if !e.multisigEnabled {
+	if !e.multisigEnabled || e.escrowManager == nil {
 		return fmt.Errorf("escrow not enabled")
 	}
 
-	// TODO: Mark payment as disputed in paywall library
-	return nil
+	// Request dispute as seller (this store acts as seller)
+	return e.escrowManager.RequestDispute(paymentID, pw.RoleSeller, reason)
 }
 
 // ResolveDispute resolves a disputed escrow payment.
 func (e *EmbeddedPaywall) ResolveDispute(ctx context.Context, paymentID string, resolution string, arbiterSig SignatureData) error {
-	if !e.multisigEnabled {
+	if !e.multisigEnabled || e.escrowManager == nil {
 		return fmt.Errorf("escrow not enabled")
 	}
 
-	// TODO: Verify arbiter signature and execute resolution
-	return nil
+	// TODO: This method signature needs to be extended to include the winner's signature
+	// The paywall library's ResolveDispute requires both arbiter and winner signatures
+	// For now, return an error indicating the limitation
+
+	// Determine winner role based on resolution
+	var winnerRole pw.MultisigRole
+	if resolution == "release" {
+		winnerRole = pw.RoleSeller
+	} else if resolution == "refund" {
+		winnerRole = pw.RoleBuyer
+	} else {
+		return fmt.Errorf("invalid resolution: %s (must be 'release' or 'refund')", resolution)
+	}
+
+	// Note: Full implementation requires extending the API to accept winner signature
+	return fmt.Errorf("dispute resolution requires both arbiter signature and winner signature (role: %s) - API extension needed", winnerRole)
 }
 
 // Helper functions for payment generation

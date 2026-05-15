@@ -130,7 +130,7 @@ func setupIntegrationTest(t *testing.T) (*api.Handler, *bolt.DB, *store.Store, *
 	// Create mock paywall client (for integration tests, we still mock external services)
 	paywallClient := &mockIntegrationPaywallClient{}
 
-	h := api.NewHandler(s, paywallClient)
+	h := api.NewHandler(s, paywallClient, "test-admin-token")
 
 	// Create router and register routes
 	r := mux.NewRouter()
@@ -604,7 +604,7 @@ func TestPaymentFlow_CheckoutEndpoint(t *testing.T) {
 	database := db.NewBoltDatabase(boltDB)
 	s := store.NewStore(database, reg)
 	paywallClient := &mockIntegrationPaywallClient{}
-	h := api.NewHandler(s, paywallClient)
+	h := api.NewHandler(s, paywallClient, "test-admin-token")
 
 	r := mux.NewRouter()
 	r.HandleFunc("/api/catalog", h.GetCatalog).Methods("GET")
@@ -748,7 +748,7 @@ func setupTestWithHandlers(t *testing.T) (*api.Handler, *bolt.DB, *store.Store, 
 	// Create mock paywall client with mock server URL
 	paywallClient := &mockIntegrationPaywallClient{}
 
-	h := api.NewHandler(s, paywallClient)
+	h := api.NewHandler(s, paywallClient, "test-admin-token")
 
 	// Create router and register routes
 	r := mux.NewRouter()

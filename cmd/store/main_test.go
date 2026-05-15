@@ -17,21 +17,23 @@ import (
 // testConfig creates a Config with sensible defaults for testing
 func testConfig() *config.Config {
 	return &config.Config{
-		ServerPort:        "8080",
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		ShutdownTimeout:   30 * time.Second,
-		DatabasePath:      "./data/store.db",
-		PaywallTestnet:    true,
-		PaywallDBPath:     "./data/paywall.db",
-		EncryptionEnabled: false,
-		EncryptionKey:     "",
-		RateLimitEnabled:  true,
-		RateLimitRPM:      60,
-		RateLimitBurst:    10,
-		CSRFEnabled:       true,
-		AdminToken:        "",
-		CORSOrigins:       []string{"*"},
+		ServerPort:              "8080",
+		ReadTimeout:             10 * time.Second,
+		WriteTimeout:            10 * time.Second,
+		ShutdownTimeout:         30 * time.Second,
+		DatabasePath:            "./data/store.db",
+		PaywallTestnet:          true,
+		PaywallDBPath:           "./data/paywall.db",
+		PaywallTimeout:          24 * time.Hour,
+		PaywallMinConfirmations: 1,
+		EncryptionEnabled:       false,
+		EncryptionKey:           "",
+		RateLimitEnabled:        true,
+		RateLimitRPM:            60,
+		RateLimitBurst:          10,
+		CSRFEnabled:             true,
+		AdminToken:              "",
+		CORSOrigins:             []string{"*"},
 	}
 }
 

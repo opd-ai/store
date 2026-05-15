@@ -123,7 +123,7 @@ func initializeServices(boltDB *bolt.DB, cfg *config.Config) *api.Handler {
 	log.Println("Embedded paywall initialized successfully")
 
 	// Initialize API handlers
-	apiHandler := api.NewHandler(storeService, paywallClient)
+	apiHandler := api.NewHandler(storeService, paywallClient, cfg.AdminToken)
 
 	return apiHandler
 }

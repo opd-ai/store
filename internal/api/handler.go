@@ -26,13 +26,15 @@ import (
 type Handler struct {
 	store         store.Service
 	paywallClient paywall.Service
+	adminToken    string
 }
 
 // NewHandler creates a new API handler.
-func NewHandler(s store.Service, paywallClient paywall.Service) *Handler {
+func NewHandler(s store.Service, paywallClient paywall.Service, adminToken string) *Handler {
 	return &Handler{
 		store:         s,
 		paywallClient: paywallClient,
+		adminToken:    adminToken,
 	}
 }
 
