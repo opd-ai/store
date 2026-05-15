@@ -1,3 +1,6 @@
+// Package main provides the store service executable.
+// This is the main entry point for the opd-ai/store cryptocurrency payment gateway
+// with pluggable fulfillment handlers for digital goods, physical shipping, and print-on-demand.
 package main
 
 import (

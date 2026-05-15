@@ -1,3 +1,6 @@
+// Package main provides a mock paywall service for local development and testing.
+// This simulates the opd-ai/paywall API for cryptocurrency payment processing
+// without requiring actual Bitcoin or Monero transactions.
 package main
 
 import (

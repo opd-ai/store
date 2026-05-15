@@ -1,3 +1,6 @@
+// Package main provides a utility for rotating encryption keys in the store database.
+// This tool re-encrypts all backend_config data with a new encryption key,
+// enabling zero-downtime key rotation for security compliance.
 package main
 
 import (

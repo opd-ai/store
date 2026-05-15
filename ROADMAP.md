@@ -568,7 +568,7 @@ golangci-lint  # (runs in CI, no failures reported)
 - [x] Add `// Package <name>` doc comment to every package
 - [x] Include purpose, key types, and usage examples
 - [x] Run `go doc -all` to verify formatting
-- [ ] Add to CI: fail if package docs missing (custom linter)
+- [x] Add to CI: fail if package docs missing (custom linter)
 
 **Estimated Effort**: 2 hours
 

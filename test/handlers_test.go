@@ -1,3 +1,6 @@
+// Package test provides integration tests for the store service.
+// These tests verify end-to-end functionality including handler orchestration,
+// payment processing, and external service integrations.
 package test
 
 import (
