@@ -65,12 +65,15 @@ func (m *mockStoreService) UpdateFulfillmentResult(ctx context.Context, paymentI
 func (m *mockStoreService) CreatePayment(ctx context.Context, itemID, amount, currency string) (*models.Payment, error) {
 	return nil, nil
 }
+
 func (m *mockStoreService) UpdatePaymentInvoice(ctx context.Context, paymentID, invoiceID string) error {
 	return nil
 }
+
 func (m *mockStoreService) UpdatePaymentPayerInfo(ctx context.Context, paymentID string, payerInfo models.JSONMap) error {
 	return nil
 }
+
 func (m *mockStoreService) ConfirmPayment(ctx context.Context, paymentID, paymentHash string) error {
 	return nil
 }
@@ -78,15 +81,19 @@ func (m *mockStoreService) FulfillPayment(ctx context.Context, paymentID string)
 func (m *mockStoreService) GetPayment(ctx context.Context, paymentID string) (*models.Payment, error) {
 	return nil, nil
 }
+
 func (m *mockStoreService) GetPaymentByInvoiceID(ctx context.Context, invoiceID string) (*models.Payment, error) {
 	return nil, nil
 }
+
 func (m *mockStoreService) GetCatalog(ctx context.Context) (map[string]interface{}, error) {
 	return nil, nil
 }
+
 func (m *mockStoreService) SubmitFormData(ctx context.Context, paymentID string, formData models.JSONMap) (*models.FormSubmission, error) {
 	return nil, nil
 }
+
 func (m *mockStoreService) GetFormSubmission(ctx context.Context, paymentID string) (*models.FormSubmission, error) {
 	return nil, nil
 }
@@ -94,9 +101,11 @@ func (m *mockStoreService) HandlerMetadata() map[string]handler.HandlerMetadata 
 func (m *mockStoreService) CreateCategory(ctx context.Context, name, description string) (*models.Category, error) {
 	return nil, nil
 }
+
 func (m *mockStoreService) ListCategories(ctx context.Context) ([]*models.Category, error) {
 	return nil, nil
 }
+
 func (m *mockStoreService) UpdateCategory(ctx context.Context, id string, updates map[string]interface{}) error {
 	return nil
 }
@@ -104,9 +113,11 @@ func (m *mockStoreService) DeleteCategory(ctx context.Context, id string) error 
 func (m *mockStoreService) CreateItem(ctx context.Context, item *models.Item) (*models.Item, error) {
 	return nil, nil
 }
+
 func (m *mockStoreService) ListItems(ctx context.Context, filters map[string]interface{}) ([]*models.Item, error) {
 	return nil, nil
 }
+
 func (m *mockStoreService) UpdateItem(ctx context.Context, id string, updates map[string]interface{}) error {
 	return nil
 }
@@ -124,15 +135,27 @@ func (m *mockStoreService) RemoveItemTag(ctx context.Context, itemID, tagID stri
 func (m *mockStoreService) GetItemTags(ctx context.Context, itemID string) ([]*models.Tag, error) {
 	return nil, nil
 }
+
 func (m *mockStoreService) RecordDownload(ctx context.Context, paymentID, ipAddress, userAgent string) error {
 	return nil
 }
+
 func (m *mockStoreService) GetDownloadCount(ctx context.Context, paymentID string) (int, error) {
 	return 0, nil
 }
+
 func (m *mockStoreService) CheckDownloadLimit(ctx context.Context, paymentID string, maxDownloads int) (bool, error) {
 	return true, nil
 }
+
+func (m *mockStoreService) CreateAuditLog(ctx context.Context, log *models.AuditLog) error {
+	return nil
+}
+
+func (m *mockStoreService) ListAuditLogs(ctx context.Context, filters map[string]interface{}) ([]*models.AuditLog, error) {
+	return nil, nil
+}
+
 func (m *mockStoreService) CleanupOldAuditLogs(ctx context.Context, retentionDays int) (int, error) {
 	return 0, nil
 }

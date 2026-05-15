@@ -1180,6 +1180,104 @@ func TestCheckDownloadLimitZeroMax(t *testing.T) {
 	}
 }
 
+// TestCreateAuditLog tests creating audit log entries.
+func TestCreateAuditLog(t *testing.T) {
+	s := setupTestStore(t)
+	ctx := context.Background()
+
+	log := models.NewAuditLog("admin123", "create_item", "item", "item_1", "127.0.0.1", "Mozilla/5.0", models.JSONMap{
+		"name":  "Test Item",
+		"price": "0.001",
+	})
+
+	// Create the audit log
+	err := s.CreateAuditLog(ctx, log)
+	if err != nil {
+		t.Fatalf("CreateAuditLog failed: %v", err)
+	}
+
+	// Verify it was created by listing all logs
+	logs, err := s.ListAuditLogs(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListAuditLogs failed: %v", err)
+	}
+
+	if len(logs) != 1 {
+		t.Fatalf("Expected 1 audit log, got %d", len(logs))
+	}
+
+	if logs[0].ID != log.ID {
+		t.Errorf("Expected log ID %s, got %s", log.ID, logs[0].ID)
+	}
+	if logs[0].Action != "create_item" {
+		t.Errorf("Expected action 'create_item', got %s", logs[0].Action)
+	}
+}
+
+// TestCreateAuditLog_NilLog tests error handling for nil audit log.
+func TestCreateAuditLog_NilLog(t *testing.T) {
+	s := setupTestStore(t)
+	ctx := context.Background()
+
+	err := s.CreateAuditLog(ctx, nil)
+	if err == nil {
+		t.Fatal("Expected error when creating nil audit log, got nil")
+	}
+}
+
+// TestListAuditLogs_WithFilters tests listing audit logs with filters.
+func TestListAuditLogs_WithFilters(t *testing.T) {
+	s := setupTestStore(t)
+	ctx := context.Background()
+
+	// Create multiple audit logs with different attributes
+	log1 := models.NewAuditLog("admin123", "create_item", "item", "item_1", "127.0.0.1", "Mozilla", models.JSONMap{})
+	log2 := models.NewAuditLog("admin456", "delete_item", "item", "item_2", "192.168.1.1", "Chrome", models.JSONMap{})
+	log3 := models.NewAuditLog("admin123", "create_category", "category", "cat_1", "127.0.0.1", "Safari", models.JSONMap{})
+
+	for _, log := range []*models.AuditLog{log1, log2, log3} {
+		if err := s.CreateAuditLog(ctx, log); err != nil {
+			t.Fatalf("CreateAuditLog failed: %v", err)
+		}
+	}
+
+	// Test filter by action
+	logs, err := s.ListAuditLogs(ctx, map[string]interface{}{"action": "create_item"})
+	if err != nil {
+		t.Fatalf("ListAuditLogs failed: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Errorf("Expected 1 log with action 'create_item', got %d", len(logs))
+	}
+
+	// Test filter by resource
+	logs, err = s.ListAuditLogs(ctx, map[string]interface{}{"resource": "item"})
+	if err != nil {
+		t.Fatalf("ListAuditLogs failed: %v", err)
+	}
+	if len(logs) != 2 {
+		t.Errorf("Expected 2 logs with resource 'item', got %d", len(logs))
+	}
+
+	// Test filter by admin token
+	logs, err = s.ListAuditLogs(ctx, map[string]interface{}{"admin_token": "admin123"})
+	if err != nil {
+		t.Fatalf("ListAuditLogs failed: %v", err)
+	}
+	if len(logs) != 2 {
+		t.Errorf("Expected 2 logs with admin_token 'admin123', got %d", len(logs))
+	}
+
+	// Test no filters (should return all)
+	logs, err = s.ListAuditLogs(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListAuditLogs failed: %v", err)
+	}
+	if len(logs) != 3 {
+		t.Errorf("Expected 3 logs with no filters, got %d", len(logs))
+	}
+}
+
 // TestCleanupOldAuditLogs tests the audit log retention/cleanup functionality.
 func TestCleanupOldAuditLogs(t *testing.T) {
 	// Set up test database and store

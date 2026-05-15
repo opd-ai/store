@@ -75,6 +75,8 @@ type Service interface {
 	CheckDownloadLimit(ctx context.Context, paymentID string, maxDownloads int) (bool, error)
 
 	// Audit log operations
+	CreateAuditLog(ctx context.Context, log *models.AuditLog) error
+	ListAuditLogs(ctx context.Context, filters map[string]interface{}) ([]*models.AuditLog, error)
 	CleanupOldAuditLogs(ctx context.Context, retentionDays int) (int, error)
 }
 
@@ -1021,6 +1023,66 @@ func (s *Store) decryptBackendConfig(config models.JSONMap) (models.JSONMap, err
 	}
 
 	return decrypted, nil
+}
+
+// CreateAuditLog creates a new audit log entry for tracking admin actions.
+func (s *Store) CreateAuditLog(ctx context.Context, log *models.AuditLog) error {
+	if log == nil {
+		return fmt.Errorf("audit log cannot be nil")
+	}
+
+	return s.database.Update(func(tx db.Transaction) error {
+		bucket := tx.GetBucket(db.BucketAuditLogs)
+		return bucket.Put(log.ID, log)
+	})
+}
+
+// ListAuditLogs retrieves audit logs with optional filtering.
+// Supported filters: "action", "resource", "admin_token", "from", "to" (time range).
+func (s *Store) ListAuditLogs(ctx context.Context, filters map[string]interface{}) ([]*models.AuditLog, error) {
+	var logs []*models.AuditLog
+
+	err := s.database.View(func(tx db.Transaction) error {
+		bucket := tx.GetBucket(db.BucketAuditLogs)
+		return bucket.GetAll(&logs)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list audit logs: %w", err)
+	}
+
+	// Apply filters if provided
+	if len(filters) == 0 {
+		return logs, nil
+	}
+
+	filtered := make([]*models.AuditLog, 0)
+	for _, log := range logs {
+		if matchesFilters(log, filters) {
+			filtered = append(filtered, log)
+		}
+	}
+
+	return filtered, nil
+}
+
+// matchesFilters checks if an audit log matches the given filters.
+func matchesFilters(log *models.AuditLog, filters map[string]interface{}) bool {
+	if action, ok := filters["action"].(string); ok && log.Action != action {
+		return false
+	}
+	if resource, ok := filters["resource"].(string); ok && log.Resource != resource {
+		return false
+	}
+	if adminToken, ok := filters["admin_token"].(string); ok && log.AdminToken != adminToken {
+		return false
+	}
+	if from, ok := filters["from"].(time.Time); ok && log.Timestamp.Before(from) {
+		return false
+	}
+	if to, ok := filters["to"].(time.Time); ok && log.Timestamp.After(to) {
+		return false
+	}
+	return true
 }
 
 // CleanupOldAuditLogs removes audit log entries older than the specified retention period.

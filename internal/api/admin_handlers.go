@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/mux"
 
@@ -515,15 +516,35 @@ func (h *Handler) ListAuditLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Implement filtering by:
-	// - action (query param: ?action=create_item)
-	// - resource (query param: ?resource=item)
-	// - date range (query params: ?from=2024-01-01&to=2024-12-31)
+	// Build filters from query parameters
+	filters := make(map[string]interface{})
 
-	// For now, return a placeholder response
+	if action := r.URL.Query().Get("action"); action != "" {
+		filters["action"] = action
+	}
+	if resource := r.URL.Query().Get("resource"); resource != "" {
+		filters["resource"] = resource
+	}
+	if from := r.URL.Query().Get("from"); from != "" {
+		// Parse ISO 8601 date format
+		if t, err := time.Parse(time.RFC3339, from); err == nil {
+			filters["from"] = t
+		}
+	}
+	if to := r.URL.Query().Get("to"); to != "" {
+		if t, err := time.Parse(time.RFC3339, to); err == nil {
+			filters["to"] = t
+		}
+	}
+
+	logs, err := h.store.ListAuditLogs(r.Context(), filters)
+	if err != nil {
+		sendError(w, http.StatusInternalServerError, "Failed to retrieve audit logs")
+		return
+	}
+
 	sendJSON(w, http.StatusOK, map[string]interface{}{
-		"audit_logs": []interface{}{},
-		"total":      0,
-		"message":    "Audit logging infrastructure in place. Full implementation pending.",
+		"audit_logs": logs,
+		"total":      len(logs),
 	})
 }

@@ -108,7 +108,7 @@ func TestSetupRouter(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	boltDB, err := bolt.Open(dbPath, 0600, &bolt.Options{Timeout: 1 * time.Second})
+	boltDB, err := bolt.Open(dbPath, 0o600, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
 		t.Fatalf("failed to open test database: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestInitializeServices(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	boltDB, err := bolt.Open(dbPath, 0600, &bolt.Options{Timeout: 1 * time.Second})
+	boltDB, err := bolt.Open(dbPath, 0o600, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
 		t.Fatalf("failed to open test database: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestInitializeServices_WithEncryption(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	boltDB, err := bolt.Open(dbPath, 0600, &bolt.Options{Timeout: 1 * time.Second})
+	boltDB, err := bolt.Open(dbPath, 0o600, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
 		t.Fatalf("failed to open test database: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestInitializeServices_MissingPaywallConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	boltDB, err := bolt.Open(dbPath, 0600, &bolt.Options{Timeout: 1 * time.Second})
+	boltDB, err := bolt.Open(dbPath, 0o600, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
 		t.Fatalf("failed to open test database: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestRegisterCRUDEndpoints(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	boltDB, err := bolt.Open(dbPath, 0600, &bolt.Options{Timeout: 1 * time.Second})
+	boltDB, err := bolt.Open(dbPath, 0o600, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
 		t.Fatalf("failed to open test database: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestStartServer_Integration(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	boltDB, err := bolt.Open(dbPath, 0600, &bolt.Options{Timeout: 1 * time.Second})
+	boltDB, err := bolt.Open(dbPath, 0o600, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
 		t.Fatalf("failed to open test database: %v", err)
 	}

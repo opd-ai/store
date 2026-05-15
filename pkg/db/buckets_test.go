@@ -12,7 +12,7 @@ func TestInitBuckets(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	boltDB, err := bolt.Open(dbPath, 0600, nil)
+	boltDB, err := bolt.Open(dbPath, 0o600, nil)
 	if err != nil {
 		t.Fatalf("failed to open database: %v", err)
 	}
@@ -48,7 +48,6 @@ func TestInitBuckets(t *testing.T) {
 		}
 		return nil
 	})
-
 	if err != nil {
 		t.Fatalf("failed to verify buckets: %v", err)
 	}
@@ -59,7 +58,7 @@ func TestInitBuckets_Idempotent(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	boltDB, err := bolt.Open(dbPath, 0600, nil)
+	boltDB, err := bolt.Open(dbPath, 0o600, nil)
 	if err != nil {
 		t.Fatalf("failed to open database: %v", err)
 	}
@@ -80,7 +79,6 @@ func TestInitBuckets_Idempotent(t *testing.T) {
 		}
 		return bucket.Put([]byte("test"), []byte("value"))
 	})
-
 	if err != nil {
 		t.Fatalf("failed to use bucket after multiple InitBuckets calls: %v", err)
 	}

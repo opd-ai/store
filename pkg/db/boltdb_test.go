@@ -41,7 +41,6 @@ func TestBoltDatabase_View(t *testing.T) {
 		bucket := tx.GetBucket(BucketCategories)
 		return bucket.Get(testKey, &result)
 	})
-
 	if err != nil {
 		t.Fatalf("View transaction failed: %v", err)
 	}
@@ -74,7 +73,6 @@ func TestBoltDatabase_Update(t *testing.T) {
 		}
 		return nil
 	})
-
 	if err != nil {
 		t.Fatalf("Update transaction failed: %v", err)
 	}
@@ -373,7 +371,6 @@ func TestBoltBucket_AddIndex(t *testing.T) {
 		bucket := tx.GetBucket(BucketCategories)
 		return bucket.AddIndex(BucketPaymentsByInvoice, "invoice-123", "payment-456")
 	})
-
 	if err != nil {
 		t.Fatalf("AddIndex failed: %v", err)
 	}
@@ -385,7 +382,6 @@ func TestBoltBucket_AddIndex(t *testing.T) {
 		value, err = bucket.GetIndex(BucketPaymentsByInvoice, "invoice-123")
 		return err
 	})
-
 	if err != nil {
 		t.Fatalf("GetIndex failed: %v", err)
 	}
@@ -485,7 +481,6 @@ func TestBoltTransaction_Context(t *testing.T) {
 		}
 		return nil
 	})
-
 	if err != nil {
 		t.Fatalf("transaction failed: %v", err)
 	}
@@ -614,7 +609,7 @@ func setupTestDB(t *testing.T) *BoltDatabase {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	boltDB, err := bolt.Open(dbPath, 0600, nil)
+	boltDB, err := bolt.Open(dbPath, 0o600, nil)
 	if err != nil {
 		t.Fatalf("failed to open test database: %v", err)
 	}

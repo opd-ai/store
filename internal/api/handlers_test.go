@@ -2023,12 +2023,12 @@ func TestServeDownload_ValidLocalFile(t *testing.T) {
 
 	// Create test file
 	uploadsDir := "/tmp/test_uploads_" + t.Name()
-	os.MkdirAll(uploadsDir, 0755)
+	os.MkdirAll(uploadsDir, 0o755)
 	t.Cleanup(func() { os.RemoveAll(uploadsDir) })
 
 	testFilePath := uploadsDir + "/test-file.txt"
 	testContent := []byte("test content for download")
-	if err := os.WriteFile(testFilePath, testContent, 0644); err != nil {
+	if err := os.WriteFile(testFilePath, testContent, 0o644); err != nil {
 		t.Fatalf("failed to create test file: %v", err)
 	}
 
@@ -2201,11 +2201,11 @@ func TestServeDownload_LimitExceeded(t *testing.T) {
 
 	// Create test file
 	uploadsDir := "/tmp/test_uploads_limit_" + t.Name()
-	os.MkdirAll(uploadsDir, 0755)
+	os.MkdirAll(uploadsDir, 0o755)
 	t.Cleanup(func() { os.RemoveAll(uploadsDir) })
 
 	testFilePath := uploadsDir + "/test-limit.txt"
-	if err := os.WriteFile(testFilePath, []byte("content"), 0644); err != nil {
+	if err := os.WriteFile(testFilePath, []byte("content"), 0o644); err != nil {
 		t.Fatalf("failed to create test file: %v", err)
 	}
 
@@ -2315,7 +2315,7 @@ func TestServeDownload_FileNotFound(t *testing.T) {
 	h, s, _ := setupTestHandlerWithRealHandlers(t)
 
 	uploadsDir := "/tmp/test_uploads_notfound_" + t.Name()
-	os.MkdirAll(uploadsDir, 0755)
+	os.MkdirAll(uploadsDir, 0o755)
 	t.Cleanup(func() { os.RemoveAll(uploadsDir) })
 
 	os.Setenv("STORE_UPLOADS_DIR", uploadsDir)

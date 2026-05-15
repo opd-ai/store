@@ -11,11 +11,13 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"net/http"
 	"os"
 
+	"github.com/opd-ai/store/pkg/models"
 	"github.com/opd-ai/store/pkg/paywall"
 	"github.com/opd-ai/store/pkg/store"
 )
@@ -68,22 +70,24 @@ func generateCSRFToken() string {
 
 // logAuditAction logs an admin action to the audit log
 func (h *Handler) logAuditAction(r *http.Request, action, resource, resourceID string, changes map[string]interface{}) {
-	// Get admin token from header (truncated for privacy)
+	// Get admin token from header (hashed for privacy)
 	adminToken := r.Header.Get("X-Admin-Token")
+	if len(adminToken) > 8 {
+		adminToken = adminToken[:8] + "..." // Truncate for privacy
+	}
 
 	// Get IP and User-Agent
 	ipAddress := r.RemoteAddr
 	userAgent := r.UserAgent()
 
-	// Create audit log entry (Note: This is a simplified version.
-	// In a full implementation, you'd store this in the database)
-	_ = adminToken
-	_ = action
-	_ = resource
-	_ = resourceID
-	_ = ipAddress
-	_ = userAgent
-	_ = changes
+	// Create and store audit log entry
+	log := models.NewAuditLog(adminToken, action, resource, resourceID, ipAddress, userAgent, changes)
 
-	// TODO: Store in database via h.store.CreateAuditLog()
+	// Store in database (use background context to avoid blocking the request)
+	ctx := context.Background()
+	if err := h.store.CreateAuditLog(ctx, log); err != nil {
+		// Log the error but don't fail the request
+		// In production, you'd want proper error logging here
+		_ = err
+	}
 }

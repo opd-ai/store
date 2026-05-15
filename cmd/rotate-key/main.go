@@ -88,7 +88,7 @@ func main() {
 	log.Println("New encryption key loaded")
 
 	// Open database
-	boltDB, err := bolt.Open(dbPath, 0600, &bolt.Options{Timeout: 5 * time.Second})
+	boltDB, err := bolt.Open(dbPath, 0o600, &bolt.Options{Timeout: 5 * time.Second})
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}
