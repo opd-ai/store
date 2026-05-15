@@ -14,6 +14,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 
 	"github.com/opd-ai/store/internal/handlers"
+	"github.com/opd-ai/store/pkg/config"
 	"github.com/opd-ai/store/pkg/db"
 	"github.com/opd-ai/store/pkg/handler"
 	"github.com/opd-ai/store/pkg/models"
@@ -165,7 +166,8 @@ func setupTestHandler(t *testing.T) (*Handler, *store.Store) {
 	// Create mock paywall client for tests
 	paywallClient := &mockPaywallClient{}
 
-	h := NewHandler(s, paywallClient, "test-admin-token")
+	testCfg := &config.Config{}
+	h := NewHandler(s, paywallClient, "test-admin-token", testCfg)
 
 	return h, s
 }
@@ -192,7 +194,8 @@ func setupTestHandlerWithRealHandlers(t *testing.T) (*Handler, *store.Store, db.
 	s := store.NewStore(database, reg)
 
 	paywallClient := &mockPaywallClient{}
-	h := NewHandler(s, paywallClient, "test-admin-token")
+	testCfg := &config.Config{}
+	h := NewHandler(s, paywallClient, "test-admin-token", testCfg)
 
 	return h, s, database
 }
@@ -1859,7 +1862,8 @@ func TestWebhookPaymentConfirmed_WithSignature(t *testing.T) {
 			return signature == "valid-signature", nil
 		},
 	}
-	h := NewHandler(s, mockPW, "test-admin-token")
+	testCfg := &config.Config{}
+	h := NewHandler(s, mockPW, "test-admin-token", testCfg)
 	ctx := context.Background()
 
 	// Create test data
@@ -1909,7 +1913,8 @@ func TestWebhookPaymentConfirmed_InvalidSignature(t *testing.T) {
 			return false, nil
 		},
 	}
-	h := NewHandler(s, mockPW, "test-admin-token")
+	testCfg := &config.Config{}
+	h := NewHandler(s, mockPW, "test-admin-token", testCfg)
 
 	payload := map[string]string{
 		"invoice_id": "test-invoice",

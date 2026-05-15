@@ -4,12 +4,14 @@ package paywall
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"time"
 
 	pw "github.com/opd-ai/paywall"
 	"github.com/opd-ai/paywall/wallet"
+	"github.com/opd-ai/store/pkg/crypto"
 )
 
 // EmbeddedConfig holds configuration for the embedded paywall.
@@ -130,13 +132,46 @@ func (e *EmbeddedPaywall) CreateInvoice(ctx context.Context, amount, currency, c
 
 // GetInvoiceStatus retrieves the status of a payment invoice.
 func (e *EmbeddedPaywall) GetInvoiceStatus(ctx context.Context, invoiceID string) (*InvoiceStatus, error) {
-	// TODO: Query actual paywall library for payment status
+	// Query paywall library for payment
+	payment, err := e.paywall.Store.GetPayment(invoiceID)
+	if err != nil {
+		return nil, fmt.Errorf("payment not found: %w", err)
+	}
+
+	// Determine status based on confirmations
+	status := "pending"
+	confirmed := false
+
+	if payment.Confirmations >= e.config.MinConfirmations {
+		status = "confirmed"
+		confirmed = true
+	} else if time.Now().After(payment.ExpiresAt) {
+		status = "expired"
+	}
+
+	// Get amount and currency from the payment
+	// Default to Bitcoin, or use the first non-zero amount
+	var amount string
+	var currency string
+
+	if btcAmount, ok := payment.Amounts[wallet.Bitcoin]; ok && btcAmount > 0 {
+		amount = fmt.Sprintf("%.8f", btcAmount)
+		currency = string(wallet.Bitcoin)
+	} else if xmrAmount, ok := payment.Amounts[wallet.Monero]; ok && xmrAmount > 0 {
+		amount = fmt.Sprintf("%.12f", xmrAmount)
+		currency = string(wallet.Monero)
+	} else {
+		// No amount set, return empty
+		amount = "0"
+		currency = "BTC"
+	}
+
 	return &InvoiceStatus{
 		InvoiceID: invoiceID,
-		Status:    "pending",
-		Confirmed: false,
-		Amount:    "",
-		Currency:  "BTC",
+		Status:    status,
+		Confirmed: confirmed,
+		Amount:    amount,
+		Currency:  currency,
 	}, nil
 }
 
@@ -177,14 +212,109 @@ func (e *EmbeddedPaywall) CreateEmbeddedPayment(ctx context.Context, amount floa
 
 // ConfirmEmbeddedPayment marks a payment as confirmed.
 func (e *EmbeddedPaywall) ConfirmEmbeddedPayment(ctx context.Context, paymentID string, txHash string) error {
-	// TODO: Update payment status in paywall library
+	// Get the payment
+	payment, err := e.paywall.Store.GetPayment(paymentID)
+	if err != nil {
+		return fmt.Errorf("payment not found: %w", err)
+	}
+
+	// Update payment status and transaction hash
+	payment.Status = pw.StatusConfirmed
+	payment.TransactionID = txHash
+	payment.BroadcastedAt = time.Now()
+
+	// Save the updated payment
+	if err := e.paywall.Store.UpdatePayment(payment); err != nil {
+		return fmt.Errorf("failed to update payment: %w", err)
+	}
+
 	return nil
 }
 
 // GetEmbeddedPayment retrieves a payment by ID.
 func (e *EmbeddedPaywall) GetEmbeddedPayment(ctx context.Context, paymentID string) (*EmbeddedPayment, error) {
-	// TODO: Query paywall library
-	return nil, fmt.Errorf("payment not found: %s", paymentID)
+	payment, err := e.paywall.Store.GetPayment(paymentID)
+	if err != nil {
+		return nil, fmt.Errorf("payment not found: %s", paymentID)
+	}
+
+	// Get the primary address and amount (default to Bitcoin)
+	var address string
+	var amount float64
+	var currency string
+
+	if btcAddr, ok := payment.Addresses[wallet.Bitcoin]; ok {
+		address = btcAddr
+		amount = payment.Amounts[wallet.Bitcoin]
+		currency = string(wallet.Bitcoin)
+	} else if xmrAddr, ok := payment.Addresses[wallet.Monero]; ok {
+		address = xmrAddr
+		amount = payment.Amounts[wallet.Monero]
+		currency = string(wallet.Monero)
+	}
+
+	// Determine overall payment status
+	status := string(payment.Status)
+	escrowState := ""
+	if payment.MultisigEnabled {
+		switch payment.EscrowState {
+		case 0: // EscrowNone
+			escrowState = "none"
+		case 1: // EscrowPending
+			escrowState = "pending"
+		case 2: // EscrowFunded
+			escrowState = "funded"
+		case 3: // EscrowReleased
+			escrowState = "released"
+		case 4: // EscrowRefunded
+			escrowState = "refunded"
+		case 5: // EscrowDisputed
+			escrowState = "disputed"
+		case 6: // EscrowTimeout
+			escrowState = "timeout"
+		}
+	}
+
+	embeddedPayment := &EmbeddedPayment{
+		ID:            payment.ID,
+		Address:       address,
+		Amount:        amount,
+		Currency:      currency,
+		Status:        status,
+		EscrowEnabled: payment.MultisigEnabled,
+		EscrowState:   escrowState,
+		ExpiresAt:     payment.ExpiresAt,
+	}
+
+	if payment.MultisigEnabled {
+		// Convert signatures from paywall format to embedded format
+		var signatures []SignatureData
+		for walletType, sigs := range payment.Signatures {
+			for _, sig := range sigs {
+				signatures = append(signatures, SignatureData{
+					SignerID:  sig.SignerID,
+					Role:      string(sig.Role),
+					Signature: sig.Signature,
+					PublicKey: sig.PublicKey,
+					SignedAt:  sig.SignedAt,
+				})
+			}
+			// Use first wallet type's signatures (Bitcoin preferred)
+			if walletType == wallet.Bitcoin {
+				break
+			}
+		}
+		embeddedPayment.Signatures = signatures
+		embeddedPayment.RequiredSigs = 2 // 2-of-3 multisig
+
+		// Set funded/released timestamps if available
+		if !payment.BroadcastedAt.IsZero() {
+			embeddedPayment.FundedAt = &payment.BroadcastedAt
+		}
+		// ReleasedAt would need to be tracked separately in a real implementation
+	}
+
+	return embeddedPayment, nil
 }
 
 // ReleaseEscrow releases escrowed funds to the seller.
@@ -326,12 +456,34 @@ func DecodeKey(keyHex string) ([]byte, error) {
 	return hex.DecodeString(keyHex)
 }
 
-// DecryptKey decrypts an encrypted key (placeholder for actual encryption).
+// DecryptKey decrypts an encrypted key using AES-256-GCM.
 func DecryptKey(encryptedKey string, encryptionKey string) ([]byte, error) {
-	// TODO: Implement actual decryption
-	// For now, assume keys are stored in hex format
 	if encryptedKey == "" {
 		return nil, nil
 	}
-	return hex.DecodeString(encryptedKey)
+
+	// If encryption key is not provided, assume the key is stored as hex
+	if encryptionKey == "" {
+		return hex.DecodeString(encryptedKey)
+	}
+
+	// Initialize encryption service
+	enc, err := crypto.NewEncryptionServiceFromBase64(encryptionKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize decryption: %w", err)
+	}
+
+	// Decode the base64-encoded encrypted key
+	ciphertext, err := base64.StdEncoding.DecodeString(encryptedKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode encrypted key: %w", err)
+	}
+
+	// Decrypt the key
+	decryptedKey, err := enc.Decrypt(ciphertext)
+	if err != nil {
+		return nil, fmt.Errorf("decryption failed: %w", err)
+	}
+
+	return decryptedKey, nil
 }

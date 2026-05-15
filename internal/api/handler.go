@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/opd-ai/store/pkg/config"
 	"github.com/opd-ai/store/pkg/models"
 	"github.com/opd-ai/store/pkg/paywall"
 	"github.com/opd-ai/store/pkg/store"
@@ -27,14 +28,16 @@ type Handler struct {
 	store         store.Service
 	paywallClient paywall.Service
 	adminToken    string
+	config        *config.Config
 }
 
 // NewHandler creates a new API handler.
-func NewHandler(s store.Service, paywallClient paywall.Service, adminToken string) *Handler {
+func NewHandler(s store.Service, paywallClient paywall.Service, adminToken string, cfg *config.Config) *Handler {
 	return &Handler{
 		store:         s,
 		paywallClient: paywallClient,
 		adminToken:    adminToken,
+		config:        cfg,
 	}
 }
 

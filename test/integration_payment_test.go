@@ -15,6 +15,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 
 	"github.com/opd-ai/store/internal/api"
+	"github.com/opd-ai/store/pkg/config"
 	"github.com/opd-ai/store/pkg/db"
 	"github.com/opd-ai/store/pkg/handler"
 	"github.com/opd-ai/store/pkg/models"
@@ -130,7 +131,8 @@ func setupIntegrationTest(t *testing.T) (*api.Handler, *bolt.DB, *store.Store, *
 	// Create mock paywall client (for integration tests, we still mock external services)
 	paywallClient := &mockIntegrationPaywallClient{}
 
-	h := api.NewHandler(s, paywallClient, "test-admin-token")
+	testCfg := &config.Config{}
+	h := api.NewHandler(s, paywallClient, "test-admin-token", testCfg)
 
 	// Create router and register routes
 	r := mux.NewRouter()
@@ -604,7 +606,8 @@ func TestPaymentFlow_CheckoutEndpoint(t *testing.T) {
 	database := db.NewBoltDatabase(boltDB)
 	s := store.NewStore(database, reg)
 	paywallClient := &mockIntegrationPaywallClient{}
-	h := api.NewHandler(s, paywallClient, "test-admin-token")
+	testCfg := &config.Config{}
+	h := api.NewHandler(s, paywallClient, "test-admin-token", testCfg)
 
 	r := mux.NewRouter()
 	r.HandleFunc("/api/catalog", h.GetCatalog).Methods("GET")
@@ -748,7 +751,8 @@ func setupTestWithHandlers(t *testing.T) (*api.Handler, *bolt.DB, *store.Store, 
 	// Create mock paywall client with mock server URL
 	paywallClient := &mockIntegrationPaywallClient{}
 
-	h := api.NewHandler(s, paywallClient, "test-admin-token")
+	testCfg := &config.Config{}
+	h := api.NewHandler(s, paywallClient, "test-admin-token", testCfg)
 
 	// Create router and register routes
 	r := mux.NewRouter()

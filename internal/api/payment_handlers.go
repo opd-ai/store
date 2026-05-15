@@ -36,6 +36,14 @@ func (h *Handler) CreateCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Determine if escrow should be used based on item backend type and config
+	useEscrow := h.determineEscrowMode(item.BackendType)
+
+	// Log escrow decision for visibility (actual escrow activation would require additional integration)
+	if useEscrow {
+		log.Printf("Payment for item %s (%s backend) will use escrow mode based on config", item.ID, item.BackendType)
+	}
+
 	payment, err := h.store.CreatePayment(r.Context(), req.ItemID, item.Price, item.Currency)
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, err.Error())
@@ -58,6 +66,25 @@ func (h *Handler) CreateCheckout(w http.ResponseWriter, r *http.Request) {
 
 	response := h.buildCheckoutResponse(payment, invoice)
 	sendJSON(w, http.StatusCreated, response)
+}
+
+// determineEscrowMode determines if escrow should be used based on backend type and config.
+func (h *Handler) determineEscrowMode(backendType string) bool {
+	if h.config == nil {
+		return false
+	}
+
+	switch backendType {
+	case "digital_media":
+		return h.config.PaymentModeDigital == "multisig-escrow"
+	case "shipping_form":
+		return h.config.PaymentModeShipping == "multisig-escrow"
+	case "pod":
+		return h.config.PaymentModePOD == "multisig-escrow"
+	default:
+		// Default to single-sig for custom handlers
+		return false
+	}
 }
 
 // savePayerEmail stores the payer's email in the payment record.
