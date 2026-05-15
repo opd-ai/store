@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 
 	"github.com/opd-ai/store/pkg/handler"
+	"github.com/opd-ai/store/pkg/metrics"
 	"github.com/opd-ai/store/pkg/models"
 )
 
@@ -36,10 +37,12 @@ func NewDigitalMediaHandler() *DigitalMediaHandler {
 func (h *DigitalMediaHandler) Handle(ctx context.Context, payment *models.Payment, item *models.Item) (map[string]interface{}, error) {
 	// Reject escrow payments for digital media
 	if payment.EscrowEnabled {
+		metrics.HandlerErrors.WithLabelValues("digital_media").Inc()
 		return nil, fmt.Errorf("digital media does not support escrow payments")
 	}
 
 	if err := validatePaymentConfirmed(payment); err != nil {
+		metrics.HandlerErrors.WithLabelValues("digital_media").Inc()
 		return nil, err
 	}
 
@@ -47,6 +50,7 @@ func (h *DigitalMediaHandler) Handle(ctx context.Context, payment *models.Paymen
 
 	downloadURL, fileSize, err := h.generateDownloadURL(ctx, item, config)
 	if err != nil {
+		metrics.HandlerErrors.WithLabelValues("digital_media").Inc()
 		return nil, err
 	}
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/opd-ai/store/pkg/handler"
+	"github.com/opd-ai/store/pkg/metrics"
 	"github.com/opd-ai/store/pkg/models"
 	"github.com/opd-ai/store/pkg/pod"
 )
@@ -22,25 +23,30 @@ func NewPrintOnDemandHandler() *PrintOnDemandHandler {
 func (h *PrintOnDemandHandler) Handle(ctx context.Context, payment *models.Payment, item *models.Item) (map[string]interface{}, error) {
 	// Reject escrow payments for PoD
 	if payment.EscrowEnabled {
+		metrics.HandlerErrors.WithLabelValues("pod").Inc()
 		return nil, fmt.Errorf("print-on-demand handler does not support escrow payments")
 	}
 
 	if !payment.IsConfirmed() {
+		metrics.HandlerErrors.WithLabelValues("pod").Inc()
 		return nil, handler.ErrPaymentNotConfirmed
 	}
 
 	provider, err := setupProvider(item.BackendConfig)
 	if err != nil {
+		metrics.HandlerErrors.WithLabelValues("pod").Inc()
 		return nil, err
 	}
 
 	variantID, recipientInfo, err := prepareOrderDetails(item, payment)
 	if err != nil {
+		metrics.HandlerErrors.WithLabelValues("pod").Inc()
 		return nil, err
 	}
 
 	orderResp, err := executeOrder(ctx, provider, variantID, recipientInfo, item)
 	if err != nil {
+		metrics.HandlerErrors.WithLabelValues("pod").Inc()
 		return nil, err
 	}
 

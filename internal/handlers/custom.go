@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/opd-ai/store/pkg/handler"
+	"github.com/opd-ai/store/pkg/metrics"
 	"github.com/opd-ai/store/pkg/models"
 )
 
@@ -43,12 +44,14 @@ func NewCustomHandler() *CustomHandler {
 func (h *CustomHandler) Handle(ctx context.Context, payment *models.Payment, item *models.Item) (map[string]interface{}, error) {
 	// Verify payment is confirmed
 	if !payment.IsConfirmed() {
+		metrics.HandlerErrors.WithLabelValues("custom").Inc()
 		return nil, handler.ErrPaymentNotConfirmed
 	}
 
 	// Extract and validate webhook configuration
 	webhookURL, retryCount, err := h.extractWebhookConfig(item.BackendConfig)
 	if err != nil {
+		metrics.HandlerErrors.WithLabelValues("custom").Inc()
 		return nil, err
 	}
 
@@ -91,11 +94,13 @@ func (h *CustomHandler) invokeWithRetry(ctx context.Context, webhookURL string, 
 		// Don't retry on last attempt
 		if attempt < retryCount {
 			if err := h.backoffDelay(ctx, attempt); err != nil {
+				metrics.HandlerErrors.WithLabelValues("custom").Inc()
 				return nil, err
 			}
 		}
 	}
 
+	metrics.HandlerErrors.WithLabelValues("custom").Inc()
 	return nil, fmt.Errorf("webhook invocation failed after %d retries: %w", retryCount, lastErr)
 }
 

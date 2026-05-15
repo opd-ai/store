@@ -20,6 +20,7 @@ import (
 	"github.com/opd-ai/store/pkg/crypto"
 	"github.com/opd-ai/store/pkg/db"
 	"github.com/opd-ai/store/pkg/handler"
+	"github.com/opd-ai/store/pkg/metrics"
 	"github.com/opd-ai/store/pkg/models"
 )
 
@@ -123,9 +124,11 @@ func (s *Store) CreatePayment(ctx context.Context, itemID, amount, currency stri
 		return tx.GetBucket(db.BucketPayments).AddIndex(db.BucketPaymentsByStatus, payment.Status+":"+payment.ID, payment.ID)
 	})
 	if err != nil {
+		metrics.RecordPayment("failed")
 		return nil, fmt.Errorf("failed to create payment: %w", err)
 	}
 
+	metrics.RecordPayment("pending")
 	return payment, nil
 }
 
@@ -194,7 +197,7 @@ func (s *Store) updatePaymentField(ctx context.Context, paymentID, field string,
 
 // ConfirmPayment marks a payment as confirmed by the payment gateway.
 func (s *Store) ConfirmPayment(ctx context.Context, paymentID, paymentHash string) error {
-	return s.database.Update(func(tx db.Transaction) error {
+	err := s.database.Update(func(tx db.Transaction) error {
 		var payment models.Payment
 		if err := tx.GetBucket(db.BucketPayments).Get(paymentID, &payment); err != nil {
 			return fmt.Errorf("payment not found: %w", err)
@@ -216,6 +219,12 @@ func (s *Store) ConfirmPayment(ctx context.Context, paymentID, paymentHash strin
 		// Add new status index
 		return tx.GetBucket(db.BucketPayments).AddIndex(db.BucketPaymentsByStatus, payment.Status+":"+payment.ID, payment.ID)
 	})
+
+	if err == nil {
+		metrics.RecordPayment("confirmed")
+	}
+
+	return err
 }
 
 // FulfillPayment dispatches the payment to the appropriate handler based on item type.
@@ -252,9 +261,13 @@ func (s *Store) FulfillPayment(ctx context.Context, paymentID string) error {
 	// Set item on payment for handler
 	payment.Item = &item
 
-	// Execute handler
+	// Execute handler with timing
+	start := time.Now()
 	result, err := h.Handle(ctx, &payment, &item)
+	duration := time.Since(start).Seconds()
+
 	if err != nil {
+		metrics.HandlerErrors.WithLabelValues(item.BackendType).Inc()
 		// Update payment with failure status
 		s.database.Update(func(tx db.Transaction) error {
 			tx.GetBucket(db.BucketPayments).DeleteIndex(db.BucketPaymentsByStatus, payment.Status+":"+payment.ID)
@@ -264,8 +277,11 @@ func (s *Store) FulfillPayment(ctx context.Context, paymentID string) error {
 			tx.GetBucket(db.BucketPayments).AddIndex(db.BucketPaymentsByStatus, payment.Status+":"+payment.ID, payment.ID)
 			return nil
 		})
+		metrics.RecordPayment("fulfillment_failed")
 		return fmt.Errorf("handler failed: %w", err)
 	}
+
+	metrics.RecordFulfillment(item.BackendType, duration)
 
 	// Update payment with fulfillment result
 	return s.database.Update(func(tx db.Transaction) error {

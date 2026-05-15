@@ -13,6 +13,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"github.com/opd-ai/store/pkg/metrics"
 	"github.com/opd-ai/store/pkg/models"
 	"github.com/opd-ai/store/pkg/paywall"
 	storesvc "github.com/opd-ai/store/pkg/store"
@@ -32,6 +33,7 @@ func (h *Handler) CreateCheckout(w http.ResponseWriter, r *http.Request) {
 
 	item, err := h.store.GetItem(r.Context(), req.ItemID)
 	if err != nil {
+		metrics.CheckoutErrors.WithLabelValues("invalid_item").Inc()
 		sendError(w, http.StatusNotFound, "Item not found")
 		return
 	}
@@ -46,6 +48,7 @@ func (h *Handler) CreateCheckout(w http.ResponseWriter, r *http.Request) {
 
 	payment, err := h.store.CreatePayment(r.Context(), req.ItemID, item.Price, item.Currency)
 	if err != nil {
+		metrics.CheckoutErrors.WithLabelValues("payment_creation_failed").Inc()
 		sendError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -54,6 +57,7 @@ func (h *Handler) CreateCheckout(w http.ResponseWriter, r *http.Request) {
 
 	invoice, err := h.createPaywallInvoice(r.Context(), payment)
 	if err != nil {
+		metrics.CheckoutErrors.WithLabelValues("paywall_error").Inc()
 		sendError(w, http.StatusInternalServerError, "Failed to create payment invoice")
 		return
 	}

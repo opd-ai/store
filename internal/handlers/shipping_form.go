@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/opd-ai/store/pkg/handler"
+	"github.com/opd-ai/store/pkg/metrics"
 	"github.com/opd-ai/store/pkg/models"
 )
 
@@ -22,6 +23,7 @@ func NewShippingFormHandler() *ShippingFormHandler {
 func (h *ShippingFormHandler) Handle(ctx context.Context, payment *models.Payment, item *models.Item) (map[string]interface{}, error) {
 	// Verify payment is confirmed
 	if !payment.IsConfirmed() {
+		metrics.HandlerErrors.WithLabelValues("shipping_form").Inc()
 		return nil, handler.ErrPaymentNotConfirmed
 	}
 
