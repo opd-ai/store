@@ -1,3 +1,13 @@
+// Package crypto provides encryption and decryption services for sensitive data.
+// It uses AES-256-GCM with AEAD for encrypting backend configurations and secrets.
+//
+// Example usage:
+//
+//	encryption, err := crypto.NewEncryptionServiceFromBase64(base64Key)
+//	if err != nil {
+//		return err
+//	}
+//	encrypted, err := encryption.Encrypt(plaintext)
 package crypto
 
 import (

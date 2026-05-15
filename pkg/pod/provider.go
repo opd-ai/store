@@ -1,3 +1,13 @@
+// Package pod provides print-on-demand provider integrations.
+// It defines a Provider interface supporting Printful and other fulfillment services.
+//
+// Supported providers: Printful (more coming soon).
+//
+// Example usage:
+//
+//	provider, err := pod.NewProvider("printful", apiKey)
+//	order, err := provider.CreateOrder(ctx, orderRequest)
+//	status, err := provider.GetStatus(ctx, orderID)
 package pod
 
 import (

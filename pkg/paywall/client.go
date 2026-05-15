@@ -1,3 +1,13 @@
+// Package paywall provides a client for the opd-ai/paywall cryptocurrency payment service.
+// It handles invoice creation, webhook signature verification, and payment status queries.
+//
+// Supported cryptocurrencies: Bitcoin (BTC), Monero (XMR).
+//
+// Example usage:
+//
+//	client := paywall.NewClient(paywallURL, apiKey)
+//	invoice, err := client.CreateInvoice(ctx, amount, currency)
+//	isValid := client.VerifyWebhookSignature(payload, signature, secret)
 package paywall
 
 import (

@@ -551,11 +551,11 @@ golangci-lint  # (runs in CI, no failures reported)
 **Current**: `/admin/orders/{payment_id}/status` endpoint exists but returns mock data
 
 **Tasks**:
-- [ ] In `GetOrderStatus()` handler, call provider's `GetOrderStatus()` method
-- [ ] Cache status in payment record (`fulfillment_result.tracking_status`)
-- [ ] Support multiple providers (Printful, Redbubble) via strategy pattern
-- [ ] Return tracking URL, estimated ship date, current status
-- [ ] Add background job to poll status every 1 hour for active orders
+- [x] In `GetOrderStatus()` handler, call provider's `GetOrderStatus()` method
+- [x] Cache status in payment record (`fulfillment_result.tracking_status`)
+- [x] Support multiple providers (Printful, Redbubble) via strategy pattern
+- [x] Return tracking URL, estimated ship date, current status
+- [x] Add background job to poll status every 1 hour for active orders
 
 **Estimated Effort**: 6 hours
 
@@ -565,9 +565,9 @@ golangci-lint  # (runs in CI, no failures reported)
 **Current**: 0% package documentation (go-stats-generator finding)
 
 **Tasks**:
-- [ ] Add `// Package <name>` doc comment to every package
-- [ ] Include purpose, key types, and usage examples
-- [ ] Run `go doc -all` to verify formatting
+- [x] Add `// Package <name>` doc comment to every package
+- [x] Include purpose, key types, and usage examples
+- [x] Run `go doc -all` to verify formatting
 - [ ] Add to CI: fail if package docs missing (custom linter)
 
 **Estimated Effort**: 2 hours

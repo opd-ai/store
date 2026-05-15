@@ -1,3 +1,13 @@
+// Package handlers provides fulfillment handler implementations.
+// It includes handlers for digital media, shipping forms, print-on-demand, and custom webhooks.
+//
+// Implemented handlers:
+//   - DigitalMediaHandler: file downloads (local/S3)
+//   - ShippingFormHandler: collect shipping address
+//   - PoDHandler: print-on-demand integration
+//   - CustomHandler: webhook/script based fulfillment
+//
+// All handlers implement the handler.FulfillmentHandler interface.
 package handlers
 
 import (

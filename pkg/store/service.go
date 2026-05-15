@@ -1,3 +1,14 @@
+// Package store provides the core business logic for payment orchestration and fulfillment.
+// It coordinates payments, catalog management, fulfillment handlers, and audit logging.
+//
+// Key types: Service (interface), Store (implementation).
+//
+// Example usage:
+//
+//	store := store.NewStore(database, registry)
+//	payment, err := store.CreatePayment(ctx, itemID, amount, currency)
+//	err = store.ConfirmPayment(ctx, paymentID, hash)
+//	err = store.FulfillPayment(ctx, paymentID)
 package store
 
 import (

@@ -1,3 +1,9 @@
+// Package models defines domain models for the store.
+// It includes types for categories, items, payments, tags, forms, and audit logs.
+//
+// Key types: Category, Item, Payment, Tag, FormSubmission, AuditLog, DownloadLog.
+//
+// All models include JSON and BoltDB serialization support.
 package models
 
 import (

@@ -1,3 +1,13 @@
+// Package printful provides a client for the Printful print-on-demand API.
+// It handles order creation, status tracking, and cancellations.
+//
+// API documentation: https://developers.printful.com/docs/
+//
+// Example usage:
+//
+//	client := printful.NewClient(apiKey)
+//	order, err := client.CreateOrder(ctx, orderData)
+//	status, err := client.GetOrderStatus(ctx, orderID)
 package printful
 
 import (

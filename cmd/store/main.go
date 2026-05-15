@@ -18,6 +18,7 @@ import (
 
 	"github.com/opd-ai/store/internal/api"
 	"github.com/opd-ai/store/internal/handlers"
+	"github.com/opd-ai/store/pkg/background"
 	"github.com/opd-ai/store/pkg/config"
 	"github.com/opd-ai/store/pkg/crypto"
 	"github.com/opd-ai/store/pkg/db"
@@ -61,6 +62,14 @@ func main() {
 	// Initialize services
 	apiHandler := initializeServices(boltDB, cfg)
 
+	// Start background jobs
+	var podPoller *background.PoDPoller
+	if cfg.PoDPollingEnabled {
+		podPoller = background.NewPoDPoller(apiHandler.Store(), cfg.PoDPollingInterval)
+		podPoller.Start(context.Background())
+		log.Printf("Started PoD polling with interval: %v", cfg.PoDPollingInterval)
+	}
+
 	// Setup router with all endpoints
 	router := setupRouter(apiHandler, cfg)
 
@@ -74,7 +83,7 @@ func main() {
 	}
 
 	startServer(server, cfg.ServerPort)
-	waitForShutdown(server, cfg.ShutdownTimeout)
+	waitForShutdown(server, cfg.ShutdownTimeout, podPoller)
 }
 
 // initializeServices sets up the store service, paywall client, and API handler.
@@ -195,12 +204,19 @@ func startServer(server *http.Server, port string) {
 }
 
 // waitForShutdown waits for interrupt signal and performs graceful shutdown.
-func waitForShutdown(server *http.Server, shutdownTimeout time.Duration) {
+func waitForShutdown(server *http.Server, shutdownTimeout time.Duration, podPoller *background.PoDPoller) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 
 	log.Println("Shutting down server...")
+
+	// Stop background jobs first
+	if podPoller != nil {
+		log.Println("Stopping PoD poller...")
+		podPoller.Stop()
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 

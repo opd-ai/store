@@ -1,3 +1,13 @@
+// Package metrics provides Prometheus metrics for monitoring store operations.
+// It tracks payments, fulfillment duration, checkout errors, and handler errors.
+//
+// Exposed metrics:
+//   - store_payments_total: payment count by status
+//   - store_fulfillment_duration_seconds: fulfillment time by handler type
+//   - store_checkout_errors_total: checkout failures by reason
+//   - store_handler_errors_total: handler errors by type
+//
+// Metrics are automatically exposed on /metrics endpoint via promhttp.Handler().
 package metrics
 
 import (

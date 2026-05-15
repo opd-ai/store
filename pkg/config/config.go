@@ -1,3 +1,14 @@
+// Package config provides application configuration management.
+// It supports loading configuration from files (YAML), environment variables,
+// and defaults. Priority order: CLI flags > env vars > config file > defaults.
+//
+// Example usage:
+//
+//	cfg, err := config.Load("config.yaml")
+//	if err != nil {
+//		log.Fatal(err)
+//	}
+//	server := &http.Server{Addr: ":" + cfg.ServerPort}
 package config
 
 import (
@@ -43,6 +54,10 @@ type Config struct {
 
 	// CORS settings
 	CORSOrigins []string `mapstructure:"cors_origins"`
+
+	// Background job settings
+	PoDPollingEnabled  bool          `mapstructure:"pod_polling_enabled"`
+	PoDPollingInterval time.Duration `mapstructure:"pod_polling_interval"`
 }
 
 // Load loads configuration from file, environment variables, and defaults
@@ -113,6 +128,10 @@ func setDefaults(v *viper.Viper) {
 
 	// CORS defaults
 	v.SetDefault("cors_origins", []string{"*"})
+
+	// Background job defaults
+	v.SetDefault("pod_polling_enabled", true)
+	v.SetDefault("pod_polling_interval", 1*time.Hour)
 }
 
 // applyEnvironmentOverrides ensures environment variables take precedence
@@ -164,6 +183,15 @@ func applyEnvironmentOverrides(cfg *Config) {
 		cfg.AdminToken = adminToken
 	}
 
+	// Background jobs
+	if pollingEnabled := os.Getenv("STORE_POD_POLLING_ENABLED"); pollingEnabled != "" {
+		cfg.PoDPollingEnabled = pollingEnabled != "false"
+	}
+	if pollingInterval := os.Getenv("STORE_POD_POLLING_INTERVAL"); pollingInterval != "" {
+		if duration, err := time.ParseDuration(pollingInterval); err == nil {
+			cfg.PoDPollingInterval = duration
+		}
+	}
 	// Audit log retention
 	if retentionDays := os.Getenv("STORE_AUDIT_LOG_RETENTION_DAYS"); retentionDays != "" {
 		fmt.Sscanf(retentionDays, "%d", &cfg.AuditLogRetentionDays)

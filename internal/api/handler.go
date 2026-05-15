@@ -1,3 +1,13 @@
+// Package api provides HTTP handlers for the store REST API.
+// It handles catalog queries, checkout, payment webhooks, admin operations, and downloads.
+//
+// Key endpoints:
+//   - GET /api/catalog: retrieve store catalog
+//   - POST /api/checkout: create payment
+//   - POST /webhook/payment-confirmed: process payment confirmation
+//   - POST /admin/...: admin CRUD operations
+//
+// Handlers coordinate between store service, paywall client, and fulfillment backends.
 package api
 
 import (
@@ -22,6 +32,11 @@ func NewHandler(s store.Service, paywallClient paywall.Service) *Handler {
 		store:         s,
 		paywallClient: paywallClient,
 	}
+}
+
+// Store returns the store service.
+func (h *Handler) Store() store.Service {
+	return h.store
 }
 
 // GetCSRFToken generates and returns a CSRF token.

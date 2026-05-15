@@ -1,3 +1,15 @@
+// Package db provides database abstraction layer for BoltDB operations.
+// It defines interfaces for transactions, buckets, and CRUD operations,
+// enabling clean separation between storage and business logic.
+//
+// Key types: Database, Transaction, Bucket.
+//
+// Example usage:
+//
+//	db := db.NewBoltDatabase(boltDB)
+//	err := db.Update(func(tx db.Transaction) error {
+//		return tx.GetBucket("items").Put("id", item)
+//	})
 package db
 
 import (

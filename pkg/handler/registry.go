@@ -1,3 +1,14 @@
+// Package handler provides the fulfillment handler interface and registry.
+// It defines the contract that all fulfillment backends must implement
+// (digital media, shipping forms, print-on-demand, custom webhooks).
+//
+// Key types: FulfillmentHandler, HandlerRegistry.
+//
+// Example usage:
+//
+//	registry := handler.NewRegistry()
+//	registry.Register("digital_media", digitalMediaHandler)
+//	handler, _ := registry.Get("digital_media")
 package handler
 
 import (
