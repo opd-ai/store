@@ -20,6 +20,11 @@ func NewPrintOnDemandHandler() *PrintOnDemandHandler {
 
 // Handle implements FulfillmentHandler.
 func (h *PrintOnDemandHandler) Handle(ctx context.Context, payment *models.Payment, item *models.Item) (map[string]interface{}, error) {
+	// Reject escrow payments for PoD
+	if payment.EscrowEnabled {
+		return nil, fmt.Errorf("print-on-demand handler does not support escrow payments")
+	}
+
 	if !payment.IsConfirmed() {
 		return nil, handler.ErrPaymentNotConfirmed
 	}

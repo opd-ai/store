@@ -78,6 +78,12 @@ type Service interface {
 	CreateAuditLog(ctx context.Context, log *models.AuditLog) error
 	ListAuditLogs(ctx context.Context, filters map[string]interface{}) ([]*models.AuditLog, error)
 	CleanupOldAuditLogs(ctx context.Context, retentionDays int) (int, error)
+
+	// Escrow operations
+	UpdateEscrowState(ctx context.Context, paymentID string, newState string, additionalData models.JSONMap) error
+	UpdateEscrowSignatures(ctx context.Context, paymentID string, signatures []models.EscrowSignature) error
+	UpdateEscrowDispute(ctx context.Context, paymentID string, reason string) error
+	UpdateEscrowResolution(ctx context.Context, paymentID string, resolution string) error
 }
 
 // Store orchestrates the payment-to-fulfillment workflow.
@@ -1119,4 +1125,109 @@ func (s *Store) CleanupOldAuditLogs(ctx context.Context, retentionDays int) (int
 	}
 
 	return deletedCount, nil
+}
+
+// Escrow-related methods
+
+// UpdateEscrowState transitions a payment to a new escrow state.
+func (s *Store) UpdateEscrowState(ctx context.Context, paymentID string, newState string, additionalData models.JSONMap) error {
+	return s.database.Update(func(tx db.Transaction) error {
+		var payment models.Payment
+		if err := tx.GetBucket(db.BucketPayments).Get(paymentID, &payment); err != nil {
+			return fmt.Errorf("payment not found: %w", err)
+		}
+
+		if !payment.EscrowEnabled {
+			return fmt.Errorf("payment is not an escrow payment")
+		}
+
+		// Update escrow state
+		payment.EscrowState = newState
+		payment.UpdatedAt = time.Now()
+
+		// Merge additional data if provided
+		if additionalData != nil {
+			if payment.ShippingInfo == nil {
+				payment.ShippingInfo = models.JSONMap{}
+			}
+			for k, v := range additionalData {
+				payment.ShippingInfo[k] = v
+			}
+		}
+
+		// Update payment status based on escrow state
+		oldStatus := payment.Status
+		switch newState {
+		case "released", "refunded":
+			payment.Status = "fulfilled"
+			now := time.Now()
+			payment.FulfilledAt = &now
+		}
+
+		// Update status index if status changed
+		if oldStatus != payment.Status {
+			tx.GetBucket(db.BucketPayments).DeleteIndex(db.BucketPaymentsByStatus, oldStatus+":"+payment.ID)
+			tx.GetBucket(db.BucketPayments).AddIndex(db.BucketPaymentsByStatus, payment.Status+":"+payment.ID, payment.ID)
+		}
+
+		return tx.GetBucket(db.BucketPayments).Put(paymentID, &payment)
+	})
+}
+
+// UpdateEscrowSignatures stores signatures for an escrow transaction.
+func (s *Store) UpdateEscrowSignatures(ctx context.Context, paymentID string, signatures []models.EscrowSignature) error {
+	return s.database.Update(func(tx db.Transaction) error {
+		var payment models.Payment
+		if err := tx.GetBucket(db.BucketPayments).Get(paymentID, &payment); err != nil {
+			return fmt.Errorf("payment not found: %w", err)
+		}
+
+		if !payment.EscrowEnabled {
+			return fmt.Errorf("payment is not an escrow payment")
+		}
+
+		payment.EscrowSignatures = signatures
+		payment.UpdatedAt = time.Now()
+
+		return tx.GetBucket(db.BucketPayments).Put(paymentID, &payment)
+	})
+}
+
+// UpdateEscrowDispute marks a payment as disputed with a reason.
+func (s *Store) UpdateEscrowDispute(ctx context.Context, paymentID string, reason string) error {
+	return s.database.Update(func(tx db.Transaction) error {
+		var payment models.Payment
+		if err := tx.GetBucket(db.BucketPayments).Get(paymentID, &payment); err != nil {
+			return fmt.Errorf("payment not found: %w", err)
+		}
+
+		if !payment.EscrowEnabled {
+			return fmt.Errorf("payment is not an escrow payment")
+		}
+
+		payment.EscrowState = "disputed"
+		payment.DisputeReason = &reason
+		payment.UpdatedAt = time.Now()
+
+		return tx.GetBucket(db.BucketPayments).Put(paymentID, &payment)
+	})
+}
+
+// UpdateEscrowResolution stores the resolution comment for a dispute.
+func (s *Store) UpdateEscrowResolution(ctx context.Context, paymentID string, resolution string) error {
+	return s.database.Update(func(tx db.Transaction) error {
+		var payment models.Payment
+		if err := tx.GetBucket(db.BucketPayments).Get(paymentID, &payment); err != nil {
+			return fmt.Errorf("payment not found: %w", err)
+		}
+
+		if !payment.EscrowEnabled {
+			return fmt.Errorf("payment is not an escrow payment")
+		}
+
+		payment.DisputeResolution = &resolution
+		payment.UpdatedAt = time.Now()
+
+		return tx.GetBucket(db.BucketPayments).Put(paymentID, &payment)
+	})
 }

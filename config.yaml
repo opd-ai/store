@@ -11,13 +11,23 @@ shutdown_timeout: 30s
 # Database Configuration
 database_path: "./data/store.db"
 
-# Paywall Integration
-# URL of the opd-ai/paywall service
-paywall_url: "http://localhost:8081"
+# Embedded Paywall Configuration
+paywall_testnet: true
+paywall_db_path: "./data/paywall.db"
+paywall_timeout: 24h
+paywall_min_confirmations: 1
 
-# Webhook key for verifying paywall webhook signatures
-# Generate with: openssl rand -base64 32
-paywall_webhook_key: ""
+# Payment Modes per Handler Type
+payment_mode_digital: "single-sig"
+payment_mode_shipping: "multisig-escrow"
+payment_mode_pod: "single-sig"
+
+# Multisig/Escrow Configuration
+multisig_enabled: false
+seller_public_key: ""
+arbiter_public_key: ""
+seller_private_key: ""
+escrow_timeout_physical: 168h
 
 # Encryption Settings
 # Enable encryption for backend configuration data

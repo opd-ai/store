@@ -34,6 +34,11 @@ func NewDigitalMediaHandler() *DigitalMediaHandler {
 // Handle executes the digital media fulfillment process.
 // It generates a download URL (pre-signed S3 URL or direct link) and returns it to the client.
 func (h *DigitalMediaHandler) Handle(ctx context.Context, payment *models.Payment, item *models.Item) (map[string]interface{}, error) {
+	// Reject escrow payments for digital media
+	if payment.EscrowEnabled {
+		return nil, fmt.Errorf("digital media does not support escrow payments")
+	}
+
 	if err := validatePaymentConfirmed(payment); err != nil {
 		return nil, err
 	}

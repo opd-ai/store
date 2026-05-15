@@ -70,6 +70,24 @@ type Payment struct {
 	FulfillmentResult JSONMap    `json:"fulfillment_result"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
+
+	// Escrow fields (optional, only populated for multisig payments)
+	EscrowEnabled     bool              `json:"escrow_enabled,omitempty"`
+	EscrowState       string            `json:"escrow_state,omitempty"` // created, funded, address_submitted, shipped, released, refunded, disputed
+	EscrowTimeout     *time.Time        `json:"escrow_timeout,omitempty"`
+	EscrowSignatures  []EscrowSignature `json:"escrow_signatures,omitempty"`
+	DisputeReason     *string           `json:"dispute_reason,omitempty"`
+	DisputeResolution *string           `json:"dispute_resolution,omitempty"`
+	ShippingInfo      JSONMap           `json:"shipping_info,omitempty"` // Address, tracking, etc.
+}
+
+// EscrowSignature represents a signature in a multisig escrow transaction.
+type EscrowSignature struct {
+	SignerRole string    `json:"signer_role"` // buyer, seller, arbiter
+	SignerID   string    `json:"signer_id"`
+	Signature  string    `json:"signature"`
+	PublicKey  string    `json:"public_key"`
+	SignedAt   time.Time `json:"signed_at"`
 }
 
 // FormSubmission stores form data collected by fulfillment handlers.

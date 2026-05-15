@@ -115,17 +115,58 @@ func initializeServices(boltDB *bolt.DB, cfg *config.Config) *api.Handler {
 		log.Println("Warning: Encryption disabled or key not set, backend configurations will not be encrypted")
 	}
 
-	// Initialize paywall client
-	paywallAPIKey := os.Getenv("STORE_PAYWALL_API_KEY")
-	if cfg.PaywallURL == "" || paywallAPIKey == "" {
-		log.Println("Warning: STORE_PAYWALL_URL or STORE_PAYWALL_API_KEY not set, paywall integration disabled")
+	// Initialize embedded paywall
+	paywallClient, err := initEmbeddedPaywall(cfg)
+	if err != nil {
+		log.Fatalf("Failed to initialize embedded paywall: %v", err)
 	}
-	paywallClient := paywall.NewClient(cfg.PaywallURL, paywallAPIKey)
+	log.Println("Embedded paywall initialized successfully")
 
 	// Initialize API handlers
 	apiHandler := api.NewHandler(storeService, paywallClient)
 
 	return apiHandler
+}
+
+// initEmbeddedPaywall initializes the embedded paywall with configuration.
+func initEmbeddedPaywall(cfg *config.Config) (paywall.Service, error) {
+	// Decode keys if multisig is enabled
+	var sellerPubKey, arbiterPubKey, sellerPrivKey []byte
+	var err error
+
+	if cfg.MultisigEnabled {
+		sellerPubKey, err = paywall.DecodeKey(cfg.SellerPublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode seller public key: %w", err)
+		}
+
+		arbiterPubKey, err = paywall.DecodeKey(cfg.ArbiterPublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode arbiter public key: %w", err)
+		}
+
+		sellerPrivKey, err = paywall.DecryptKey(cfg.SellerPrivateKey, cfg.EncryptionKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt seller private key: %w", err)
+		}
+
+		log.Printf("Multisig enabled: 2-of-3 escrow with timeout %v", cfg.EscrowTimeoutPhysical)
+	}
+
+	// Create embedded paywall configuration
+	embeddedCfg := paywall.EmbeddedConfig{
+		TestNet:               cfg.PaywallTestnet,
+		DBPath:                cfg.PaywallDBPath,
+		PaymentTimeout:        cfg.PaywallTimeout,
+		MinConfirmations:      cfg.PaywallMinConfirmations,
+		MultisigEnabled:       cfg.MultisigEnabled,
+		SellerPubKey:          sellerPubKey,
+		ArbiterPubKey:         arbiterPubKey,
+		SellerPrivateKey:      sellerPrivKey,
+		EscrowTimeoutPhysical: cfg.EscrowTimeoutPhysical,
+	}
+
+	return paywall.NewEmbeddedPaywall(embeddedCfg)
 }
 
 // setupRouter configures all routes and middleware.
@@ -147,6 +188,14 @@ func setupRouter(apiHandler *api.Handler, cfg *config.Config) *mux.Router {
 	}
 
 	router.HandleFunc("/api/payment/{id}/status", apiHandler.GetPaymentStatus).Methods("GET")
+
+	// Escrow endpoints
+	router.HandleFunc("/api/payment/{id}/shipping-address", apiHandler.SubmitShippingAddress).Methods("POST")
+	router.HandleFunc("/api/payment/{id}/mark-shipped", apiHandler.MarkAsShipped).Methods("POST")
+	router.HandleFunc("/api/payment/{id}/release-escrow", apiHandler.ReleaseEscrow).Methods("POST")
+	router.HandleFunc("/api/payment/{id}/refund-escrow", apiHandler.RefundEscrow).Methods("POST")
+	router.HandleFunc("/api/payment/{id}/dispute", apiHandler.InitiateDispute).Methods("POST")
+	router.HandleFunc("/admin/payment/{id}/resolve-dispute", apiHandler.ResolveDispute).Methods("POST")
 
 	// Form submission with CSRF protection if enabled
 	if cfg.CSRFEnabled {

@@ -11,13 +11,36 @@ shutdown_timeout: 30s
 # Database Configuration
 database_path: "./data/store.db"
 
-# Paywall Integration
-# URL of the opd-ai/paywall service
-paywall_url: "http://localhost:8081"
+# Embedded Paywall Configuration
+# Use testnet for development, mainnet for production
+paywall_testnet: true
+paywall_db_path: "./data/paywall.db"
+paywall_timeout: 24h
+paywall_min_confirmations: 1
 
-# Webhook key for verifying paywall webhook signatures
-# Generate with: openssl rand -base64 32
-paywall_webhook_key: ""
+# Payment Modes per Handler Type
+# Options: "single-sig" or "multisig-escrow"
+payment_mode_digital: "single-sig"      # Digital media - instant delivery
+payment_mode_shipping: "multisig-escrow" # Physical goods - escrow protection
+payment_mode_pod: "single-sig"          # Print-on-demand - provider handled
+
+# Multisig/Escrow Configuration (for physical goods)
+# Enable multisig escrow for shipping_form handler
+multisig_enabled: false
+
+# Store operator's Bitcoin public key (hex-encoded compressed public key)
+# Generate with Bitcoin wallet
+seller_public_key: ""
+
+# Arbiter's Bitcoin public key (for dispute resolution)
+arbiter_public_key: ""
+
+# Store operator's Bitcoin private key (hex-encoded, will be encrypted)
+# IMPORTANT: Keep this secure! Use environment variable in production
+seller_private_key: ""
+
+# Escrow timeout for physical goods (default: 7 days)
+escrow_timeout_physical: 168h
 
 # Encryption Settings
 # Enable encryption for backend configuration data
@@ -55,8 +78,15 @@ cors_origins:
 # write_timeout: 15s
 # shutdown_timeout: 30s
 # database_path: "/var/lib/store/store.db"
-# paywall_url: "https://paywall.yourdomain.com"
-# paywall_webhook_key: "your-webhook-key-here"
+# paywall_testnet: false  # Use mainnet in production
+# paywall_db_path: "/var/lib/store/paywall.db"
+# paywall_timeout: 24h
+# paywall_min_confirmations: 3  # More confirmations for production
+# multisig_enabled: true
+# seller_public_key: "02abc123..."  # Your actual public key
+# arbiter_public_key: "03def456..."  # Arbiter's public key
+# seller_private_key: ""  # Use STORE_SELLER_PRIVATE_KEY env var instead
+# escrow_timeout_physical: 168h  # 7 days
 # encryption_enabled: true
 # encryption_key: "your-encryption-key-here"
 # rate_limit_enabled: true

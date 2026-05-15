@@ -4,18 +4,33 @@
 [![Coverage](https://codecov.io/gh/opd-ai/store/branch/main/graph/badge.svg)](https://codecov.io/gh/opd-ai/store)
 [![Go Report Card](https://goreportcard.com/badge/github.com/opd-ai/store)](https://goreportcard.com/report/github.com/opd-ai/store)
 
-A self-hosted cryptocurrency payment store with pluggable fulfillment handlers. Integrates with **opd-ai/paywall** for Bitcoin/Monero payments and provides a flexible, extensible system for selling digital goods, physical products, print-on-demand items, or anything custom.
+A self-hosted cryptocurrency payment store with pluggable fulfillment handlers. Features **embedded paywall** integration for Bitcoin/Monero payments with optional **multisig escrow** for physical goods.
 
 ## Features
 
+- **Embedded Paywall** - Direct integration with opd-ai/paywall library (no external server needed)
+- **Multisig Escrow** - 2-of-3 escrow protection for physical goods with dispute resolution
 - **Pluggable Fulfillment Handlers** - Digital downloads, shipping forms, print-on-demand, or custom webhooks
-- **Cryptocurrency Payments** - Bitcoin and Monero via opd-ai/paywall integration
+- **Cryptocurrency Payments** - Bitcoin and Monero with single-sig or multisig support
+- **Per-Handler Payment Modes** - Single-sig for digital goods, escrow for physical items
 - **Admin API** - Manage items, categories, and tags without code changes
 - **BoltDB Storage** - Embedded key-value database with full CRUD operations
 - **RESTful API** - CORS-enabled endpoints for frontends and integrations
 - **Docker Ready** - Complete development environment with Docker Compose
 - **Handler Registry** - Dynamically register and dispatch fulfillment strategies
 - **JSON Configuration** - Flexible backend configuration stored in database
+
+## Payment Modes
+
+The store supports different payment modes optimized for each product type:
+
+| Product Type | Handler | Payment Mode | Description |
+|--------------|---------|--------------|-------------|
+| Digital Media | `digital_media` | Single-sig | Instant delivery after confirmation |
+| Physical Goods | `shipping_form` | Multisig Escrow | 2-of-3 escrow with buyer protection |
+| Print-on-Demand | `pod` | Single-sig | Provider-managed fulfillment |
+
+See [docs/ESCROW.md](docs/ESCROW.md) for detailed escrow documentation.
 
 ## Requirements
 
@@ -37,7 +52,6 @@ curl http://localhost:8080/health
 
 Services available at:
 - API: http://localhost:8080
-- Mock Paywall: http://localhost:8081
 
 ### Local Setup
 
@@ -56,18 +70,37 @@ Set environment variables in `.env`:
 STORE_DATABASE_PATH=./data/store.db
 STORE_PORT=8080
 STORE_HOST=0.0.0.0
-STORE_PAYWALL_URL=http://localhost:8081
-STORE_PAYWALL_API_KEY=sk_test_12345
-STORE_PAYWALL_WEBHOOK_SECRET=webhook_secret_12345
-STORE_PUBLIC_URL=http://localhost:8080
-STORE_AUTO_FULFILL=true
-STORE_ADMIN_TOKEN=your-secret-token
-STORE_LOG_LEVEL=debug
-STORE_LOG_FORMAT=json
-```
 
-### Configuration Variables
+# Embedded Paywall Configuration
+STORE_PAYWALL_TESTNET=true
+STORE_PAYWALL_DB_PATH=./data/paywall.db
+STORE_PAYWALL_TIMEOUT=24h
+STORE_PAYWALL_MIN_CONFIRMATIONS=1
 
+# Payment Modes
+STORE_PAYMENT_MODE_DIGITAL=single-sig
+STORE_PAYMENT_MODE_SHIPPING=multisig-escrow
+STORE_PAYMENT_MODE_POD=single-sig
+
+# Multisig/Escrow (optional, for physical goods)
+STORE_MULTISIG_ENABLED=false
+STORE_SELLER_PUBLIC_KEY=""
+STORE_ARBITER_PUBLIC_KEY=""
+STORE_SELLER_PRIVATE_KEY=""
+STORE_ESCROW_TIMETESTNET` | No | Use Bitcoin testnet (default: true) |
+| `STORE_PAYWALL_DB_PATH` | No | Path to paywall database (default: ./data/paywall.db) |
+| `STORE_PAYWALL_TIMEOUT` | No | Payment timeout duration (default: 24h) |
+| `STORE_MULTISIG_ENABLED` | No | Enable multisig escrow for physical goods (default: false) |
+| `STORE_SELLER_PUBLIC_KEY` | No | Seller's Bitcoin public key (hex) for escrow |
+| `STORE_ARBITER_PUBLIC_KEY` | No | Arbiter's Bitcoin public key (hex) for disputes |
+| `STORE_SELLER_PRIVATE_KEY` | No | Seller's Bitcoin private key (encrypted) |
+| `STORE_ESCROW_TIMEOUT_PHYSICAL` | No | Escrow timeout for physical goods (default: 168h) |
+| `STORE_PUBLIC_URL` | Yes | Public URL of this store (for callbacks) |
+| `STORE_AUTO_FULFILL` | No | Auto-fulfill payments after confirmation (default: true) |
+| `STORE_ADMIN_TOKEN` | Yes | Token for admin API authentication |
+| `STORE_ENCRYPTION_KEY` | No | Base64-encoded 32-byte key for encrypting configs |
+| `STORE_RATE_LIMIT_ENABLED` | No | Enable rate limiting on checkout (default: true) |
+| `STORE_LOG_LEVEL` | No | Log level: debug, info, warn, error (default: info
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `STORE_DATABASE_PATH` | No | Path to BoltDB database file (default: ./data/store.db) |

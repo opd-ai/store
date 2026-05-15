@@ -30,9 +30,23 @@ type Config struct {
 	// Database settings
 	DatabasePath string `mapstructure:"database_path"`
 
-	// Paywall settings
-	PaywallURL        string `mapstructure:"paywall_url"`
-	PaywallWebhookKey string `mapstructure:"paywall_webhook_key"`
+	// Embedded Paywall settings
+	PaywallTestnet          bool          `mapstructure:"paywall_testnet"`
+	PaywallDBPath           string        `mapstructure:"paywall_db_path"`
+	PaywallTimeout          time.Duration `mapstructure:"paywall_timeout"`
+	PaywallMinConfirmations int           `mapstructure:"paywall_min_confirmations"`
+
+	// Payment modes per handler type
+	PaymentModeDigital  string `mapstructure:"payment_mode_digital"`
+	PaymentModeShipping string `mapstructure:"payment_mode_shipping"`
+	PaymentModePOD      string `mapstructure:"payment_mode_pod"`
+
+	// Multisig/Escrow configuration
+	MultisigEnabled       bool          `mapstructure:"multisig_enabled"`
+	SellerPublicKey       string        `mapstructure:"seller_public_key"`
+	ArbiterPublicKey      string        `mapstructure:"arbiter_public_key"`
+	SellerPrivateKey      string        `mapstructure:"seller_private_key"`
+	EscrowTimeoutPhysical time.Duration `mapstructure:"escrow_timeout_physical"`
 
 	// Encryption settings
 	EncryptionEnabled bool   `mapstructure:"encryption_enabled"`
@@ -104,9 +118,23 @@ func setDefaults(v *viper.Viper) {
 	// Database defaults
 	v.SetDefault("database_path", "./data/store.db")
 
-	// Paywall defaults
-	v.SetDefault("paywall_url", "http://localhost:8081")
-	v.SetDefault("paywall_webhook_key", "")
+	// Embedded Paywall defaults
+	v.SetDefault("paywall_testnet", true)
+	v.SetDefault("paywall_db_path", "./data/paywall.db")
+	v.SetDefault("paywall_timeout", 24*time.Hour)
+	v.SetDefault("paywall_min_confirmations", 1)
+
+	// Payment mode defaults
+	v.SetDefault("payment_mode_digital", "single-sig")
+	v.SetDefault("payment_mode_shipping", "multisig-escrow")
+	v.SetDefault("payment_mode_pod", "single-sig")
+
+	// Multisig/Escrow defaults
+	v.SetDefault("multisig_enabled", false)
+	v.SetDefault("seller_public_key", "")
+	v.SetDefault("arbiter_public_key", "")
+	v.SetDefault("seller_private_key", "")
+	v.SetDefault("escrow_timeout_physical", 7*24*time.Hour)
 
 	// Encryption defaults
 	v.SetDefault("encryption_enabled", true)
@@ -146,12 +174,47 @@ func applyEnvironmentOverrides(cfg *Config) {
 		cfg.DatabasePath = dbPath
 	}
 
-	// Paywall settings
-	if paywallURL := os.Getenv("STORE_PAYWALL_URL"); paywallURL != "" {
-		cfg.PaywallURL = paywallURL
+	// Embedded Paywall settings
+	if testnet := os.Getenv("STORE_PAYWALL_TESTNET"); testnet != "" {
+		cfg.PaywallTestnet = testnet != "false"
 	}
-	if webhookKey := os.Getenv("STORE_PAYWALL_WEBHOOK_KEY"); webhookKey != "" {
-		cfg.PaywallWebhookKey = webhookKey
+	if pwDBPath := os.Getenv("STORE_PAYWALL_DB_PATH"); pwDBPath != "" {
+		cfg.PaywallDBPath = pwDBPath
+	}
+	if pwTimeout := os.Getenv("STORE_PAYWALL_TIMEOUT"); pwTimeout != "" {
+		if duration, err := time.ParseDuration(pwTimeout); err == nil {
+			cfg.PaywallTimeout = duration
+		}
+	}
+
+	// Payment mode settings
+	if modeDigital := os.Getenv("STORE_PAYMENT_MODE_DIGITAL"); modeDigital != "" {
+		cfg.PaymentModeDigital = modeDigital
+	}
+	if modeShipping := os.Getenv("STORE_PAYMENT_MODE_SHIPPING"); modeShipping != "" {
+		cfg.PaymentModeShipping = modeShipping
+	}
+	if modePOD := os.Getenv("STORE_PAYMENT_MODE_POD"); modePOD != "" {
+		cfg.PaymentModePOD = modePOD
+	}
+
+	// Multisig/Escrow settings
+	if multisigEnabled := os.Getenv("STORE_MULTISIG_ENABLED"); multisigEnabled != "" {
+		cfg.MultisigEnabled = multisigEnabled != "false"
+	}
+	if sellerPubKey := os.Getenv("STORE_SELLER_PUBLIC_KEY"); sellerPubKey != "" {
+		cfg.SellerPublicKey = sellerPubKey
+	}
+	if arbiterPubKey := os.Getenv("STORE_ARBITER_PUBLIC_KEY"); arbiterPubKey != "" {
+		cfg.ArbiterPublicKey = arbiterPubKey
+	}
+	if sellerPrivKey := os.Getenv("STORE_SELLER_PRIVATE_KEY"); sellerPrivKey != "" {
+		cfg.SellerPrivateKey = sellerPrivKey
+	}
+	if escrowTimeout := os.Getenv("STORE_ESCROW_TIMEOUT_PHYSICAL"); escrowTimeout != "" {
+		if duration, err := time.ParseDuration(escrowTimeout); err == nil {
+			cfg.EscrowTimeoutPhysical = duration
+		}
 	}
 
 	// Encryption settings

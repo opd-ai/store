@@ -1,56 +1,43 @@
-// Package paywall provides a client for the opd-ai/paywall cryptocurrency payment service.
-// It handles invoice creation, webhook signature verification, and payment status queries.
+// Package paywall provides integration with the embedded opd-ai/paywall library.
+// It handles payment creation, confirmation, and escrow workflows for cryptocurrency payments.
 //
 // Supported cryptocurrencies: Bitcoin (BTC), Monero (XMR).
 //
 // Example usage:
 //
-//	client := paywall.NewClient(paywallURL, apiKey)
-//	invoice, err := client.CreateInvoice(ctx, amount, currency)
-//	isValid := client.VerifyWebhookSignature(payload, signature, secret)
+//	cfg := paywall.EmbeddedConfig{TestNet: true, DBPath: "./paywall.db"}
+//	pw, err := paywall.NewEmbeddedPaywall(cfg)
+//	invoice, err := pw.CreateInvoice(ctx, amount, currency, "")
 package paywall
 
 import (
-	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
 	"time"
-)
-
-const (
-	// DefaultHTTPTimeout is the default timeout for HTTP requests to the paywall service.
-	DefaultHTTPTimeout = 30 * time.Second
 )
 
 // Service defines the interface for paywall operations.
 type Service interface {
-	// CreateInvoice creates a new payment invoice.
+	// Legacy methods for backward compatibility
 	CreateInvoice(ctx context.Context, amount, currency, callbackURL string) (*Invoice, error)
-
-	// GetInvoiceStatus retrieves the status of a payment invoice.
 	GetInvoiceStatus(ctx context.Context, invoiceID string) (*InvoiceStatus, error)
-
-	// VerifyWebhook verifies a webhook signature.
 	VerifyWebhook(signature string, payload []byte, secret string) (bool, error)
+
+	// New embedded paywall methods
+	CreateEmbeddedPayment(ctx context.Context, amount float64, timeout time.Duration, useEscrow bool) (*EmbeddedPayment, error)
+	ConfirmEmbeddedPayment(ctx context.Context, paymentID string, txHash string) error
+	GetEmbeddedPayment(ctx context.Context, paymentID string) (*EmbeddedPayment, error)
+
+	// Escrow-specific methods
+	ReleaseEscrow(ctx context.Context, paymentID string, signatures []SignatureData) error
+	RefundEscrow(ctx context.Context, paymentID string, signatures []SignatureData) error
+	DisputeEscrow(ctx context.Context, paymentID string, reason string) error
+	ResolveDispute(ctx context.Context, paymentID string, resolution string, arbiterSig SignatureData) error
 }
 
-// Client represents a client for the opd-ai/paywall service.
-type Client struct {
-	baseURL    string
-	apiKey     string
-	httpClient *http.Client
-}
+// Verify that EmbeddedPaywall implements Service at compile time.
+var _ Service = (*EmbeddedPaywall)(nil)
 
-// Verify that Client implements Service at compile time.
-var _ Service = (*Client)(nil)
-
-// Invoice represents a payment invoice from the paywall service.
+// Invoice represents a payment invoice.
 type Invoice struct {
 	InvoiceID      string    `json:"invoice_id"`
 	Status         string    `json:"status"`
@@ -68,88 +55,27 @@ type InvoiceStatus struct {
 	Currency  string `json:"currency"`
 }
 
-// NewClient creates a new paywall client.
-func NewClient(baseURL, apiKey string) *Client {
-	return &Client{
-		baseURL: baseURL,
-		apiKey:  apiKey,
-		httpClient: &http.Client{
-			Timeout: DefaultHTTPTimeout,
-		},
-	}
+// EmbeddedPayment represents a payment created with the embedded paywall.
+type EmbeddedPayment struct {
+	ID            string          `json:"id"`
+	Address       string          `json:"address"`
+	Amount        float64         `json:"amount"`
+	Currency      string          `json:"currency"`
+	Status        string          `json:"status"`
+	EscrowEnabled bool            `json:"escrow_enabled"`
+	EscrowState   string          `json:"escrow_state"`
+	RequiredSigs  int             `json:"required_sigs"`
+	Signatures    []SignatureData `json:"signatures"`
+	ExpiresAt     time.Time       `json:"expires_at"`
+	FundedAt      *time.Time      `json:"funded_at,omitempty"`
+	ReleasedAt    *time.Time      `json:"released_at,omitempty"`
 }
 
-// doRequest performs an HTTP POST request and decodes the JSON response.
-func (c *Client) doRequest(ctx context.Context, endpoint string, reqBody, respBody interface{}) error {
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+endpoint, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(respBody); err != nil {
-		return fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return nil
-}
-
-// CreateInvoice creates a new payment invoice.
-func (c *Client) CreateInvoice(ctx context.Context, amount, currency, callbackURL string) (*Invoice, error) {
-	reqBody := map[string]string{
-		"amount":       amount,
-		"currency":     currency,
-		"callback_url": callbackURL,
-	}
-
-	var invoice Invoice
-	if err := c.doRequest(ctx, "/create-payment", reqBody, &invoice); err != nil {
-		return nil, err
-	}
-
-	return &invoice, nil
-}
-
-// GetInvoiceStatus retrieves the status of an invoice.
-func (c *Client) GetInvoiceStatus(ctx context.Context, invoiceID string) (*InvoiceStatus, error) {
-	reqBody := map[string]string{
-		"invoice_id": invoiceID,
-		"tx_hash":    "", // Empty for status check
-	}
-
-	var status InvoiceStatus
-	if err := c.doRequest(ctx, "/verify-payment", reqBody, &status); err != nil {
-		return nil, err
-	}
-
-	return &status, nil
-}
-
-// VerifyWebhook verifies the signature of a webhook payload.
-func (c *Client) VerifyWebhook(signature string, payload []byte, secret string) (bool, error) {
-	mac := hmac.New(sha256.New, []byte(secret))
-	if _, err := mac.Write(payload); err != nil {
-		return false, fmt.Errorf("failed to compute HMAC: %w", err)
-	}
-
-	expectedSignature := hex.EncodeToString(mac.Sum(nil))
-	return hmac.Equal([]byte(signature), []byte(expectedSignature)), nil
+// SignatureData represents a signature in a multisig transaction.
+type SignatureData struct {
+	SignerID  string    `json:"signer_id"`
+	Role      string    `json:"role"` // buyer, seller, arbiter
+	Signature []byte    `json:"signature"`
+	PublicKey []byte    `json:"public_key"`
+	SignedAt  time.Time `json:"signed_at"`
 }
