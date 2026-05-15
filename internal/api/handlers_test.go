@@ -105,6 +105,51 @@ func (m *mockPaywallClient) VerifyWebhook(signature string, payload []byte, secr
 	return true, nil
 }
 
+// Embedded paywall methods
+func (m *mockPaywallClient) CreateEmbeddedPayment(ctx context.Context, amount float64, timeout time.Duration, useEscrow bool) (*paywall.EmbeddedPayment, error) {
+	return &paywall.EmbeddedPayment{
+		ID:            "test-payment-id",
+		Status:        "pending",
+		Address:       "bc1qtest",
+		Amount:        amount,
+		Currency:      "BTC",
+		EscrowEnabled: useEscrow,
+		ExpiresAt:     time.Now().Add(30 * time.Minute),
+	}, nil
+}
+
+func (m *mockPaywallClient) ConfirmEmbeddedPayment(ctx context.Context, paymentID, paymentHash string) error {
+	return nil
+}
+
+func (m *mockPaywallClient) GetEmbeddedPayment(ctx context.Context, paymentID string) (*paywall.EmbeddedPayment, error) {
+	return &paywall.EmbeddedPayment{
+		ID:        paymentID,
+		Status:    "pending",
+		Address:   "bc1qtest",
+		Amount:    100000,
+		Currency:  "BTC",
+		ExpiresAt: time.Now().Add(30 * time.Minute),
+	}, nil
+}
+
+// Escrow methods
+func (m *mockPaywallClient) ReleaseEscrow(ctx context.Context, paymentID string, signatures []paywall.SignatureData) error {
+	return nil
+}
+
+func (m *mockPaywallClient) RefundEscrow(ctx context.Context, paymentID string, signatures []paywall.SignatureData) error {
+	return nil
+}
+
+func (m *mockPaywallClient) DisputeEscrow(ctx context.Context, paymentID string, reason string) error {
+	return nil
+}
+
+func (m *mockPaywallClient) ResolveDispute(ctx context.Context, paymentID string, resolution string, arbiterSig paywall.SignatureData) error {
+	return nil
+}
+
 // setupTestHandler creates a handler with test database and mock paywall
 func setupTestHandler(t *testing.T) (*Handler, *store.Store) {
 	boltDB := setupTestDB(t)
@@ -117,8 +162,8 @@ func setupTestHandler(t *testing.T) (*Handler, *store.Store) {
 	database := db.NewBoltDatabase(boltDB)
 	s := store.NewStore(database, reg)
 
-	// Create a real paywall client - we'll mock the responses in tests
-	paywallClient := paywall.NewClient("http://test-paywall", "test-api-key")
+	// Create mock paywall client for tests
+	paywallClient := &mockPaywallClient{}
 
 	h := NewHandler(s, paywallClient)
 
@@ -146,7 +191,7 @@ func setupTestHandlerWithRealHandlers(t *testing.T) (*Handler, *store.Store, db.
 	database := db.NewBoltDatabase(boltDB)
 	s := store.NewStore(database, reg)
 
-	paywallClient := paywall.NewClient("http://test-paywall", "test-api-key")
+	paywallClient := &mockPaywallClient{}
 	h := NewHandler(s, paywallClient)
 
 	return h, s, database

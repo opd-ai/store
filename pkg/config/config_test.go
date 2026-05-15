@@ -89,8 +89,8 @@ csrf_enabled: false
 	if cfg.DatabasePath != "/custom/db.db" {
 		t.Errorf("DatabasePath = %v, want /custom/db.db", cfg.DatabasePath)
 	}
-	if cfg.PaywallURL != "http://paywall.example.com" {
-		t.Errorf("PaywallURL = %v, want http://paywall.example.com", cfg.PaywallURL)
+	if cfg.PaywallTestnet != true {
+		t.Errorf("PaywallTestnet = %v, want true", cfg.PaywallTestnet)
 	}
 	if cfg.RateLimitRPM != 200 {
 		t.Errorf("RateLimitRPM = %v, want 200", cfg.RateLimitRPM)

@@ -22,6 +22,74 @@ import (
 	"github.com/opd-ai/store/pkg/store"
 )
 
+// mockIntegrationPaywallClient implements paywall.Service for integration tests
+type mockIntegrationPaywallClient struct{}
+
+func (m *mockIntegrationPaywallClient) CreateInvoice(ctx context.Context, amount, currency, callbackURL string) (*paywall.Invoice, error) {
+	return &paywall.Invoice{
+		InvoiceID:      "test-invoice-" + amount,
+		Status:         "pending",
+		PaymentAddress: "bc1qtest",
+		QRCode:         "data:image/png;base64,test",
+		ExpiresAt:      time.Now().Add(30 * time.Minute),
+	}, nil
+}
+
+func (m *mockIntegrationPaywallClient) GetInvoiceStatus(ctx context.Context, invoiceID string) (*paywall.InvoiceStatus, error) {
+	return &paywall.InvoiceStatus{
+		InvoiceID: invoiceID,
+		Status:    "confirmed",
+		Confirmed: true,
+	}, nil
+}
+
+func (m *mockIntegrationPaywallClient) VerifyWebhook(signature string, payload []byte, secret string) (bool, error) {
+	return true, nil
+}
+
+func (m *mockIntegrationPaywallClient) CreateEmbeddedPayment(ctx context.Context, amount float64, timeout time.Duration, useEscrow bool) (*paywall.EmbeddedPayment, error) {
+	return &paywall.EmbeddedPayment{
+		ID:            "test-payment-id",
+		Status:        "pending",
+		Address:       "bc1qtest",
+		Amount:        amount,
+		Currency:      "BTC",
+		EscrowEnabled: useEscrow,
+		ExpiresAt:     time.Now().Add(30 * time.Minute),
+	}, nil
+}
+
+func (m *mockIntegrationPaywallClient) ConfirmEmbeddedPayment(ctx context.Context, paymentID, paymentHash string) error {
+	return nil
+}
+
+func (m *mockIntegrationPaywallClient) GetEmbeddedPayment(ctx context.Context, paymentID string) (*paywall.EmbeddedPayment, error) {
+	return &paywall.EmbeddedPayment{
+		ID:        paymentID,
+		Status:    "confirmed",
+		Address:   "bc1qtest",
+		Amount:    100000,
+		Currency:  "BTC",
+		ExpiresAt: time.Now().Add(30 * time.Minute),
+	}, nil
+}
+
+func (m *mockIntegrationPaywallClient) ReleaseEscrow(ctx context.Context, paymentID string, signatures []paywall.SignatureData) error {
+	return nil
+}
+
+func (m *mockIntegrationPaywallClient) RefundEscrow(ctx context.Context, paymentID string, signatures []paywall.SignatureData) error {
+	return nil
+}
+
+func (m *mockIntegrationPaywallClient) DisputeEscrow(ctx context.Context, paymentID string, reason string) error {
+	return nil
+}
+
+func (m *mockIntegrationPaywallClient) ResolveDispute(ctx context.Context, paymentID string, resolution string, arbiterSig paywall.SignatureData) error {
+	return nil
+}
+
 // setupIntegrationTest creates test infrastructure for integration tests
 func setupIntegrationTest(t *testing.T) (*api.Handler, *bolt.DB, *store.Store, *mux.Router) {
 	// Create temporary database
@@ -60,7 +128,7 @@ func setupIntegrationTest(t *testing.T) (*api.Handler, *bolt.DB, *store.Store, *
 	s := store.NewStore(database, reg)
 
 	// Create mock paywall client (for integration tests, we still mock external services)
-	paywallClient := paywall.NewClient("http://test-paywall", "test-api-key")
+	paywallClient := &mockIntegrationPaywallClient{}
 
 	h := api.NewHandler(s, paywallClient)
 
@@ -535,7 +603,7 @@ func TestPaymentFlow_CheckoutEndpoint(t *testing.T) {
 
 	database := db.NewBoltDatabase(boltDB)
 	s := store.NewStore(database, reg)
-	paywallClient := paywall.NewClient(mockPaywall.URL, "test-api-key")
+	paywallClient := &mockIntegrationPaywallClient{}
 	h := api.NewHandler(s, paywallClient)
 
 	r := mux.NewRouter()
@@ -678,7 +746,7 @@ func setupTestWithHandlers(t *testing.T) (*api.Handler, *bolt.DB, *store.Store, 
 	s := store.NewStore(database, reg)
 
 	// Create mock paywall client with mock server URL
-	paywallClient := paywall.NewClient(mockPaywall.URL, "test-api-key")
+	paywallClient := &mockIntegrationPaywallClient{}
 
 	h := api.NewHandler(s, paywallClient)
 

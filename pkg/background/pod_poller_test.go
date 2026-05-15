@@ -160,6 +160,23 @@ func (m *mockStoreService) CleanupOldAuditLogs(ctx context.Context, retentionDay
 	return 0, nil
 }
 
+// Escrow methods
+func (m *mockStoreService) UpdateEscrowState(ctx context.Context, paymentID, newState string, additionalData models.JSONMap) error {
+	return nil
+}
+
+func (m *mockStoreService) UpdateEscrowSignatures(ctx context.Context, paymentID string, signatures []models.EscrowSignature) error {
+	return nil
+}
+
+func (m *mockStoreService) UpdateEscrowDispute(ctx context.Context, paymentID string, reason string) error {
+	return nil
+}
+
+func (m *mockStoreService) UpdateEscrowResolution(ctx context.Context, paymentID string, resolution string) error {
+	return nil
+}
+
 func TestNewPoDPoller(t *testing.T) {
 	mockStore := &mockStoreService{}
 	interval := 1 * time.Hour
