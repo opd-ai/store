@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/gorilla/mux"
@@ -76,8 +77,8 @@ func (h *Handler) handleList(w http.ResponseWriter, r *http.Request, listFn func
 	sendJSON(w, http.StatusOK, results)
 }
 
-// handleDelete is a generic handler for delete operations.
-func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request, deleteFn func(ctx context.Context, id string) error) {
+// handleDelete is a generic handler for delete operations with audit logging.
+func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request, deleteFn func(ctx context.Context, id string) error, resource string) {
 	if err := requireAdminToken(r); err != nil {
 		sendError(w, http.StatusUnauthorized, "Unauthorized")
 		return
@@ -91,5 +92,25 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request, deleteFn 
 		return
 	}
 
+	h.logAuditEvent(r, "delete_"+resource, resource, id, nil)
+
 	sendJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// logAuditEvent creates an audit log entry for an admin action.
+func (h *Handler) logAuditEvent(r *http.Request, action, resource, resourceID string, changes models.JSONMap) {
+	adminToken := r.Header.Get("X-Admin-Token")
+	ip := getClientIP(r)
+	userAgent := r.UserAgent()
+
+	auditLog := models.NewAuditLog(adminToken, action, resource, resourceID, ip, userAgent, changes)
+
+	// Log in background to avoid blocking the response
+	go func() {
+		ctx := context.Background()
+		if err := h.store.CreateAuditLog(ctx, auditLog); err != nil {
+			// Log error but don't fail the request
+			log.Printf("Failed to create audit log: %v", err)
+		}
+	}()
 }

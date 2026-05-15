@@ -2461,3 +2461,172 @@ func TestServeDownload_MissingFilePath(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
 	}
 }
+
+// TestAuditLogging verifies that admin actions are logged
+func TestAuditLogging(t *testing.T) {
+	h, s := setupTestHandler(t)
+
+	// Set admin token for auth
+	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
+	defer os.Unsetenv("STORE_ADMIN_TOKEN")
+
+	// Test create category audit logging
+	reqBody := bytes.NewBufferString(`{"name":"Test Category","description":"Test Description"}`)
+	req := httptest.NewRequest(http.MethodPost, "/admin/categories", reqBody)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Admin-Token", "test-token")
+	req.Header.Set("X-Real-IP", "192.168.1.100")
+	req.Header.Set("User-Agent", "TestAgent/1.0")
+	w := httptest.NewRecorder()
+
+	h.CreateCategory(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusCreated, w.Code, w.Body.String())
+	}
+
+	var response models.Category
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// Give goroutine time to write audit log
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify audit log was created
+	logs, err := s.ListAuditLogs(context.Background(), map[string]interface{}{
+		"action": "create_category",
+	})
+	if err != nil {
+		t.Fatalf("failed to list audit logs: %v", err)
+	}
+
+	if len(logs) == 0 {
+		t.Fatal("expected at least one audit log entry")
+	}
+
+	log := logs[0]
+	if log.Action != "create_category" {
+		t.Errorf("expected action 'create_category', got '%s'", log.Action)
+	}
+	if log.Resource != "category" {
+		t.Errorf("expected resource 'category', got '%s'", log.Resource)
+	}
+	if log.ResourceID != response.ID {
+		t.Errorf("expected resource_id '%s', got '%s'", response.ID, log.ResourceID)
+	}
+	if log.IPAddress != "192.168.1.100" {
+		t.Errorf("expected IP '192.168.1.100', got '%s'", log.IPAddress)
+	}
+	if log.UserAgent != "TestAgent/1.0" {
+		t.Errorf("expected user agent 'TestAgent/1.0', got '%s'", log.UserAgent)
+	}
+	if log.Changes["name"] != "Test Category" {
+		t.Errorf("expected changes to include name 'Test Category', got '%v'", log.Changes["name"])
+	}
+}
+
+// TestAuditLoggingUpdate verifies that update actions are logged
+func TestAuditLoggingUpdate(t *testing.T) {
+	h, s := setupTestHandler(t)
+
+	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
+	defer os.Unsetenv("STORE_ADMIN_TOKEN")
+
+	// Create a category first
+	cat, err := s.CreateCategory(context.Background(), "Original", "Original desc")
+	if err != nil {
+		t.Fatalf("failed to create category: %v", err)
+	}
+
+	// Update the category
+	reqBody := bytes.NewBufferString(`{"name":"Updated Name"}`)
+	req := httptest.NewRequest(http.MethodPut, "/admin/categories/"+cat.ID, reqBody)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Admin-Token", "test-token")
+	req.Header.Set("X-Real-IP", "10.0.0.1")
+	req = mux.SetURLVars(req, map[string]string{"id": cat.ID})
+	w := httptest.NewRecorder()
+
+	h.UpdateCategory(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify audit log
+	logs, err := s.ListAuditLogs(context.Background(), map[string]interface{}{
+		"action": "update_category",
+	})
+	if err != nil {
+		t.Fatalf("failed to list audit logs: %v", err)
+	}
+
+	if len(logs) == 0 {
+		t.Fatal("expected at least one audit log entry for update")
+	}
+
+	log := logs[0]
+	if log.Action != "update_category" {
+		t.Errorf("expected action 'update_category', got '%s'", log.Action)
+	}
+	if log.ResourceID != cat.ID {
+		t.Errorf("expected resource_id '%s', got '%s'", cat.ID, log.ResourceID)
+	}
+	if log.Changes["name"] != "Updated Name" {
+		t.Errorf("expected changes to include name 'Updated Name', got '%v'", log.Changes["name"])
+	}
+}
+
+// TestAuditLoggingDelete verifies that delete actions are logged
+func TestAuditLoggingDelete(t *testing.T) {
+	h, s := setupTestHandler(t)
+
+	os.Setenv("STORE_ADMIN_TOKEN", "test-token")
+	defer os.Unsetenv("STORE_ADMIN_TOKEN")
+
+	// Create a tag to delete
+	tag, err := s.CreateTag(context.Background(), "Test Tag")
+	if err != nil {
+		t.Fatalf("failed to create tag: %v", err)
+	}
+
+	// Delete the tag
+	req := httptest.NewRequest(http.MethodDelete, "/admin/tags/"+tag.ID, nil)
+	req.Header.Set("X-Admin-Token", "test-token")
+	req = mux.SetURLVars(req, map[string]string{"id": tag.ID})
+	w := httptest.NewRecorder()
+
+	h.DeleteTag(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify audit log
+	logs, err := s.ListAuditLogs(context.Background(), map[string]interface{}{
+		"action": "delete_tag",
+	})
+	if err != nil {
+		t.Fatalf("failed to list audit logs: %v", err)
+	}
+
+	if len(logs) == 0 {
+		t.Fatal("expected at least one audit log entry for delete")
+	}
+
+	log := logs[0]
+	if log.Action != "delete_tag" {
+		t.Errorf("expected action 'delete_tag', got '%s'", log.Action)
+	}
+	if log.Resource != "tag" {
+		t.Errorf("expected resource 'tag', got '%s'", log.Resource)
+	}
+	if log.ResourceID != tag.ID {
+		t.Errorf("expected resource_id '%s', got '%s'", tag.ID, log.ResourceID)
+	}
+}

@@ -70,6 +70,10 @@ func (h *Handler) ConfirmPayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logAuditEvent(r, "confirm_payment", "payment", paymentID, models.JSONMap{
+		"payment_hash": req.PaymentHash,
+	})
+
 	sendJSON(w, http.StatusOK, map[string]string{"status": "confirmed"})
 }
 
@@ -87,6 +91,8 @@ func (h *Handler) FulfillPayment(w http.ResponseWriter, r *http.Request) {
 		sendError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	h.logAuditEvent(r, "fulfill_payment", "payment", paymentID, nil)
 
 	sendJSON(w, http.StatusOK, map[string]string{"status": "fulfilled"})
 }
@@ -200,6 +206,11 @@ func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logAuditEvent(r, "create_category", "category", category.ID, models.JSONMap{
+		"name":        category.Name,
+		"description": category.Description,
+	})
+
 	sendJSON(w, http.StatusCreated, category)
 }
 
@@ -247,12 +258,14 @@ func (h *Handler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logAuditEvent(r, "update_category", "category", id, updates)
+
 	sendJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
 // DeleteCategory deletes a category.
 func (h *Handler) DeleteCategory(w http.ResponseWriter, r *http.Request) {
-	h.handleDelete(w, r, h.store.DeleteCategory)
+	h.handleDelete(w, r, h.store.DeleteCategory, "category")
 }
 
 // CreateItem creates a new item.
@@ -285,6 +298,12 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 		sendError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	h.logAuditEvent(r, "create_item", "item", createdItem.ID, models.JSONMap{
+		"name":         createdItem.Name,
+		"category_id":  createdItem.CategoryID,
+		"backend_type": createdItem.BackendType,
+	})
 
 	sendJSON(w, http.StatusCreated, createdItem)
 }
@@ -350,6 +369,8 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logAuditEvent(r, "update_item", "item", id, updates)
+
 	sendJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -391,7 +412,7 @@ func addBoolPtrField(updates map[string]interface{}, key string, value *bool) {
 
 // DeleteItem deletes an item.
 func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request) {
-	h.handleDelete(w, r, h.store.DeleteItem)
+	h.handleDelete(w, r, h.store.DeleteItem, "item")
 }
 
 // CreateTag creates a new tag.
@@ -415,6 +436,10 @@ func (h *Handler) CreateTag(w http.ResponseWriter, r *http.Request) {
 		sendError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	h.logAuditEvent(r, "create_tag", "tag", tag.ID, models.JSONMap{
+		"name": tag.Name,
+	})
 
 	sendJSON(w, http.StatusCreated, tag)
 }
@@ -455,12 +480,14 @@ func (h *Handler) UpdateTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logAuditEvent(r, "update_tag", "tag", id, updates)
+
 	sendJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
 // DeleteTag deletes a tag.
 func (h *Handler) DeleteTag(w http.ResponseWriter, r *http.Request) {
-	h.handleDelete(w, r, h.store.DeleteTag)
+	h.handleDelete(w, r, h.store.DeleteTag, "tag")
 }
 
 // AddItemTag associates a tag with an item.
@@ -487,6 +514,10 @@ func (h *Handler) AddItemTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logAuditEvent(r, "add_item_tag", "item", itemID, models.JSONMap{
+		"tag_id": req.TagID,
+	})
+
 	sendJSON(w, http.StatusOK, map[string]string{"status": "added"})
 }
 
@@ -505,6 +536,10 @@ func (h *Handler) RemoveItemTag(w http.ResponseWriter, r *http.Request) {
 		sendError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	h.logAuditEvent(r, "remove_item_tag", "item", itemID, models.JSONMap{
+		"tag_id": tagID,
+	})
 
 	sendJSON(w, http.StatusOK, map[string]string{"status": "removed"})
 }

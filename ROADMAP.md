@@ -540,8 +540,10 @@ golangci-lint  # (runs in CI, no failures reported)
 - [x] Add `GET /admin/audit-logs` endpoint with filtering
 - [x] Redact sensitive fields (API keys) in logs
 - [x] Add log retention configuration (default: 90 days)
+- [x] Integrate audit logging into all admin handlers (categories, items, tags, payments)
+- [x] Add comprehensive test coverage for audit logging
 
-**Notes**: Infrastructure complete (bucket, AuditLog model, helper methods, endpoint). Full integration with all admin handlers pending.
+**Status**: ✅ Complete. All admin actions now logged with IP, user agent, and change details.
 
 **Estimated Effort**: 5 hours
 
