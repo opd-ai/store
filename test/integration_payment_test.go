@@ -652,7 +652,23 @@ func TestPaymentFlow_CheckoutEndpoint(t *testing.T) {
 		t.Fatal("Expected invoice_id in checkout response")
 	}
 
-	// GET /api/payment/{id}/status
+	// Verify payment in database immediately after checkout (before status polling)
+	payment, err := s.GetPayment(ctx, checkoutResp.PaymentID)
+	if err != nil {
+		t.Fatalf("Failed to get payment: %v", err)
+	}
+	if payment.Status != "pending" {
+		t.Errorf("Expected payment status 'pending', got %s", payment.Status)
+	}
+	if payment.Amount != "50.00" {
+		t.Errorf("Expected amount '50.00', got %s", payment.Amount)
+	}
+	if payment.PayerInfo["email"] != "buyer@example.com" {
+		t.Error("Expected email to be stored in payer_info")
+	}
+
+	// Now test that GET /api/payment/{id}/status triggers confirmation and fulfillment
+	// because the mock paywall returns "confirmed"
 	statusReq := httptest.NewRequest(http.MethodGet, "/api/payment/"+checkoutResp.PaymentID+"/status", nil)
 	statusW := httptest.NewRecorder()
 	r.ServeHTTP(statusW, statusReq)
@@ -668,20 +684,13 @@ func TestPaymentFlow_CheckoutEndpoint(t *testing.T) {
 	}
 	json.NewDecoder(statusW.Body).Decode(&statusResp)
 
-	if statusResp.Status != "pending" {
-		t.Errorf("Expected status 'pending', got %s", statusResp.Status)
+	// After polling, payment should be fulfilled because mock returns "confirmed"
+	// and auto-fulfill is enabled by default
+	if statusResp.Status != "fulfilled" {
+		t.Errorf("Expected status 'fulfilled' after polling, got %s", statusResp.Status)
 	}
 	if statusResp.Amount != "50.00" {
 		t.Errorf("Expected amount '50.00', got %s", statusResp.Amount)
-	}
-
-	// Verify payment in database
-	payment, err := s.GetPayment(ctx, checkoutResp.PaymentID)
-	if err != nil {
-		t.Fatalf("Failed to get payment: %v", err)
-	}
-	if payment.PayerInfo["email"] != "buyer@example.com" {
-		t.Error("Expected email to be stored in payer_info")
 	}
 
 	t.Logf("Integration test passed: Checkout endpoint flow")
