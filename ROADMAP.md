@@ -542,8 +542,11 @@ golangci-lint  # (runs in CI, no failures reported)
 - [x] Add log retention configuration (default: 90 days)
 - [x] Integrate audit logging into all admin handlers (categories, items, tags, payments)
 - [x] Add comprehensive test coverage for audit logging
+- [x] Implement automated audit log cleanup background service
+- [x] Add configurable retention policy (STORE_AUDIT_LOG_RETENTION_DAYS)
+- [x] Wire audit log cleaner into application lifecycle with graceful shutdown
 
-**Status**: ✅ Complete. All admin actions now logged with IP, user agent, and change details.
+**Status**: ✅ Complete. All admin actions now logged with IP, user agent, and change details. Background cleaner automatically removes logs older than configured retention period.
 
 **Estimated Effort**: 5 hours
 

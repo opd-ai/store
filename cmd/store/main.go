@@ -82,6 +82,15 @@ func main() {
 		log.Printf("Started escrow timeout checker with interval: %v", checkInterval)
 	}
 
+	// Start audit log cleaner if retention is configured
+	var auditCleaner *background.AuditLogCleaner
+	if cfg.AuditLogRetentionDays > 0 {
+		cleanupInterval := 24 * time.Hour
+		auditCleaner = background.NewAuditLogCleaner(apiHandler.Store(), cleanupInterval, cfg.AuditLogRetentionDays)
+		auditCleaner.Start(context.Background())
+		log.Printf("Started audit log cleaner with retention: %d days", cfg.AuditLogRetentionDays)
+	}
+
 	// Setup router with all endpoints
 	router := setupRouter(apiHandler, cfg)
 
@@ -95,7 +104,7 @@ func main() {
 	}
 
 	startServer(server, cfg.ServerPort)
-	waitForShutdown(server, cfg.ShutdownTimeout, podPoller, escrowChecker)
+	waitForShutdown(server, cfg.ShutdownTimeout, podPoller, escrowChecker, auditCleaner)
 }
 
 // initializeServices sets up the store service, paywall client, and API handler.
@@ -266,7 +275,7 @@ func startServer(server *http.Server, port string) {
 }
 
 // waitForShutdown waits for interrupt signal and performs graceful shutdown.
-func waitForShutdown(server *http.Server, shutdownTimeout time.Duration, podPoller *background.PoDPoller, escrowChecker *background.EscrowTimeoutChecker) {
+func waitForShutdown(server *http.Server, shutdownTimeout time.Duration, podPoller *background.PoDPoller, escrowChecker *background.EscrowTimeoutChecker, auditCleaner *background.AuditLogCleaner) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
@@ -282,6 +291,11 @@ func waitForShutdown(server *http.Server, shutdownTimeout time.Duration, podPoll
 	if escrowChecker != nil {
 		log.Println("Stopping escrow timeout checker...")
 		escrowChecker.Stop()
+	}
+
+	if auditCleaner != nil {
+		log.Println("Stopping audit log cleaner...")
+		auditCleaner.Stop()
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)

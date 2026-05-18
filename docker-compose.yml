@@ -58,7 +58,6 @@ services:
       STORE_ADMIN_TOKEN: "admin-secret-token-12345"
       
       # File storage
-      STORE_TEMPLATES_DIR: "/app/templates"
       STORE_UPLOADS_DIR: "/app/data/uploads"
       
       # S3/MinIO configuration (for testing)
