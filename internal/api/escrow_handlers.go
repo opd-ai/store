@@ -64,6 +64,43 @@ func (h *Handler) SubmitShippingAddress(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// ConfirmEscrowFunding transitions escrow payment from created to funded (system action).
+func (h *Handler) ConfirmEscrowFunding(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	paymentID := vars["id"]
+
+	// Get payment
+	payment, err := h.store.GetPayment(r.Context(), paymentID)
+	if err != nil {
+		sendError(w, http.StatusNotFound, "Payment not found")
+		return
+	}
+
+	// Verify escrow payment
+	if !payment.EscrowEnabled {
+		sendError(w, http.StatusBadRequest, "Payment is not an escrow payment")
+		return
+	}
+
+	// Verify correct state
+	if payment.EscrowState != "created" {
+		sendError(w, http.StatusBadRequest, fmt.Sprintf("Invalid escrow state: %s (expected: created)", payment.EscrowState))
+		return
+	}
+
+	// Transition escrow state to funded
+	if err := h.store.UpdateEscrowState(r.Context(), paymentID, "funded", nil); err != nil {
+		sendError(w, http.StatusInternalServerError, "Failed to update escrow state")
+		return
+	}
+
+	sendJSON(w, http.StatusOK, map[string]interface{}{
+		"payment_id":   paymentID,
+		"escrow_state": "funded",
+		"message":      "Escrow funding confirmed",
+	})
+}
+
 // MarkAsShipped marks an escrow payment as shipped (seller action).
 func (h *Handler) MarkAsShipped(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -91,6 +128,12 @@ func (h *Handler) MarkAsShipped(w http.ResponseWriter, r *http.Request) {
 	// Verify correct state
 	if payment.EscrowState != "address_submitted" {
 		sendError(w, http.StatusBadRequest, fmt.Sprintf("Invalid escrow state: %s (expected: address_submitted)", payment.EscrowState))
+		return
+	}
+
+	// Verify shipping address was submitted
+	if payment.ShippingInfo == nil || len(payment.ShippingInfo) == 0 {
+		sendError(w, http.StatusBadRequest, "Shipping address must be submitted before marking as shipped")
 		return
 	}
 
@@ -183,6 +226,12 @@ func (h *Handler) ReleaseEscrow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Validate signature roles (release requires buyer + seller)
+	if err := validateSignatureRoles(signatures, []string{"buyer", "seller"}); err != nil {
+		sendError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	// Verify signatures with paywall service and broadcast transaction
 	if err := h.paywallClient.ReleaseEscrow(r.Context(), paymentID, signatures); err != nil {
 		sendError(w, http.StatusBadRequest, fmt.Sprintf("Failed to release escrow: %v", err))
@@ -271,6 +320,22 @@ func (h *Handler) RefundEscrow(w http.ResponseWriter, r *http.Request) {
 			PublicKey: pubKeyBytes,
 			SignedAt:  sig.SignedAt,
 		}
+	}
+
+	// Validate signature roles (refund requires arbiter + one other party, or buyer + seller)
+	roleCount := make(map[string]int)
+	for _, sig := range signatures {
+		roleCount[sig.Role]++
+	}
+
+	hasArbiter := roleCount["arbiter"] > 0
+	hasBuyer := roleCount["buyer"] > 0
+	hasSeller := roleCount["seller"] > 0
+
+	validCombination := (hasArbiter && (hasBuyer || hasSeller)) || (hasBuyer && hasSeller)
+	if !validCombination {
+		sendError(w, http.StatusBadRequest, "Invalid signature combination: refund requires arbiter + one other party, or buyer + seller")
+		return
 	}
 
 	// Verify signatures and execute refund with paywall service
@@ -491,4 +556,26 @@ func (h *Handler) isAuthorizedAdmin(r *http.Request) bool {
 	}
 	// Use constant-time comparison to prevent timing attacks
 	return subtle.ConstantTimeCompare([]byte(token), []byte(h.adminToken)) == 1
+}
+
+// validateSignatureRoles verifies that the provided signatures match the required roles.
+func validateSignatureRoles(signatures []paywall.SignatureData, requiredRoles []string) error {
+	if len(signatures) < len(requiredRoles) {
+		return fmt.Errorf("insufficient signatures: need %d, got %d", len(requiredRoles), len(signatures))
+	}
+
+	// Count signatures by role
+	roleCount := make(map[string]int)
+	for _, sig := range signatures {
+		roleCount[sig.Role]++
+	}
+
+	// Verify each required role has at least one signature
+	for _, role := range requiredRoles {
+		if roleCount[role] == 0 {
+			return fmt.Errorf("missing signature from required role: %s", role)
+		}
+	}
+
+	return nil
 }

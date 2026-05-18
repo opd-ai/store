@@ -12,17 +12,24 @@ import (
 
 // mockStoreService is a mock implementation of store.Service for testing
 type mockStoreService struct {
-	payments       []*models.Payment
-	items          map[string]*models.Item
-	updateCalls    []updateCall
-	listPaymentErr error
-	getItemErr     error
-	updateErr      error
+	payments         []*models.Payment
+	items            map[string]*models.Item
+	updateCalls      []updateCall
+	escrowStateCalls []escrowStateCall
+	listPaymentErr   error
+	getItemErr       error
+	updateErr        error
 }
 
 type updateCall struct {
 	paymentID string
 	result    models.JSONMap
+}
+
+type escrowStateCall struct {
+	paymentID string
+	newState  string
+	data      models.JSONMap
 }
 
 func (m *mockStoreService) ListPayments(ctx context.Context, filters map[string]interface{}) ([]*models.Payment, error) {
@@ -166,6 +173,11 @@ func (m *mockStoreService) CleanupOldAuditLogs(ctx context.Context, retentionDay
 
 // Escrow methods
 func (m *mockStoreService) UpdateEscrowState(ctx context.Context, paymentID, newState string, additionalData models.JSONMap) error {
+	m.escrowStateCalls = append(m.escrowStateCalls, escrowStateCall{
+		paymentID: paymentID,
+		newState:  newState,
+		data:      additionalData,
+	})
 	return nil
 }
 

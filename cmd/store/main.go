@@ -73,6 +73,15 @@ func main() {
 		log.Printf("Started PoD polling with interval: %v", cfg.PoDPollingInterval)
 	}
 
+	// Start escrow timeout checker if multisig is enabled
+	var escrowChecker *background.EscrowTimeoutChecker
+	if cfg.MultisigEnabled {
+		checkInterval := 5 * time.Minute
+		escrowChecker = background.NewEscrowTimeoutChecker(apiHandler.Store(), checkInterval)
+		escrowChecker.Start(context.Background())
+		log.Printf("Started escrow timeout checker with interval: %v", checkInterval)
+	}
+
 	// Setup router with all endpoints
 	router := setupRouter(apiHandler, cfg)
 
@@ -86,7 +95,7 @@ func main() {
 	}
 
 	startServer(server, cfg.ServerPort)
-	waitForShutdown(server, cfg.ShutdownTimeout, podPoller)
+	waitForShutdown(server, cfg.ShutdownTimeout, podPoller, escrowChecker)
 }
 
 // initializeServices sets up the store service, paywall client, and API handler.
@@ -191,6 +200,7 @@ func setupRouter(apiHandler *api.Handler, cfg *config.Config) *mux.Router {
 
 	// Escrow endpoints
 	router.HandleFunc("/api/payment/{id}/shipping-address", apiHandler.SubmitShippingAddress).Methods("POST")
+	router.HandleFunc("/api/payment/{id}/confirm-funding", apiHandler.ConfirmEscrowFunding).Methods("POST")
 	router.HandleFunc("/api/payment/{id}/mark-shipped", apiHandler.MarkAsShipped).Methods("POST")
 	router.HandleFunc("/api/payment/{id}/release-escrow", apiHandler.ReleaseEscrow).Methods("POST")
 	router.HandleFunc("/api/payment/{id}/refund-escrow", apiHandler.RefundEscrow).Methods("POST")
@@ -256,7 +266,7 @@ func startServer(server *http.Server, port string) {
 }
 
 // waitForShutdown waits for interrupt signal and performs graceful shutdown.
-func waitForShutdown(server *http.Server, shutdownTimeout time.Duration, podPoller *background.PoDPoller) {
+func waitForShutdown(server *http.Server, shutdownTimeout time.Duration, podPoller *background.PoDPoller, escrowChecker *background.EscrowTimeoutChecker) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
@@ -267,6 +277,11 @@ func waitForShutdown(server *http.Server, shutdownTimeout time.Duration, podPoll
 	if podPoller != nil {
 		log.Println("Stopping PoD poller...")
 		podPoller.Stop()
+	}
+
+	if escrowChecker != nil {
+		log.Println("Stopping escrow timeout checker...")
+		escrowChecker.Stop()
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)

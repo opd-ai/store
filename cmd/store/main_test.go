@@ -219,6 +219,22 @@ func TestEnsureDirectories(t *testing.T) {
 	}
 }
 
+func TestEnsureDirectories_WithDirs(t *testing.T) {
+	tmpDir := t.TempDir()
+	testDir := filepath.Join(tmpDir, "test", "nested")
+
+	dirs := []string{testDir}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("failed to create directory: %v", err)
+		}
+	}
+
+	if _, err := os.Stat(testDir); os.IsNotExist(err) {
+		t.Errorf("directory was not created: %s", testDir)
+	}
+}
+
 func TestRegisterCRUDEndpoints(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
@@ -288,5 +304,26 @@ func TestStartServer_Integration(t *testing.T) {
 
 	if err := server.Close(); err != nil {
 		t.Errorf("failed to close server: %v", err)
+	}
+}
+
+func TestInitEmbeddedPaywall(t *testing.T) {
+	cfg := testConfig()
+	cfg.MultisigEnabled = false
+
+	svc, err := initEmbeddedPaywall(cfg)
+	if err != nil {
+		t.Fatalf("initEmbeddedPaywall failed: %v", err)
+	}
+
+	if svc == nil {
+		t.Fatal("expected non-nil paywall service")
+	}
+}
+
+func TestInitDatabase_Error(t *testing.T) {
+	_, err := initDatabase("/invalid/path/to/db.db")
+	if err == nil {
+		t.Error("expected error for invalid path")
 	}
 }
