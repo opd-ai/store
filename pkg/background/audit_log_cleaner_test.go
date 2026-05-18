@@ -37,9 +37,11 @@ func (m *mockStoreForAuditCleaner) DeleteCategory(ctx context.Context, id string
 func (m *mockStoreForAuditCleaner) CreateTag(ctx context.Context, name string) (*models.Tag, error) {
 	return nil, nil
 }
+
 func (m *mockStoreForAuditCleaner) ListTags(ctx context.Context) ([]*models.Tag, error) {
 	return nil, nil
 }
+
 func (m *mockStoreForAuditCleaner) UpdateTag(ctx context.Context, id string, updates map[string]interface{}) error {
 	return nil
 }
@@ -47,9 +49,11 @@ func (m *mockStoreForAuditCleaner) DeleteTag(ctx context.Context, id string) err
 func (m *mockStoreForAuditCleaner) AddItemTag(ctx context.Context, itemID, tagID string) error {
 	return nil
 }
+
 func (m *mockStoreForAuditCleaner) RemoveItemTag(ctx context.Context, itemID, tagID string) error {
 	return nil
 }
+
 func (m *mockStoreForAuditCleaner) GetItemTags(ctx context.Context, itemID string) ([]*models.Tag, error) {
 	return nil, nil
 }
