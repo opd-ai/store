@@ -30,6 +30,7 @@ type Service interface {
 	CreatePayment(ctx context.Context, itemID, amount, currency string) (*models.Payment, error)
 	UpdatePaymentInvoice(ctx context.Context, paymentID, invoiceID string) error
 	UpdatePaymentPayerInfo(ctx context.Context, paymentID string, payerInfo models.JSONMap) error
+	UpdatePaymentEscrow(ctx context.Context, paymentID string, escrowEnabled bool, escrowState string, escrowTimeout *time.Time) error
 	ConfirmPayment(ctx context.Context, paymentID, paymentHash string) error
 	FulfillPayment(ctx context.Context, paymentID string) error
 	GetPayment(ctx context.Context, paymentID string) (*models.Payment, error)
@@ -81,10 +82,10 @@ type Service interface {
 	CleanupOldAuditLogs(ctx context.Context, retentionDays int) (int, error)
 
 	// Escrow operations
-	UpdateEscrowState(ctx context.Context, paymentID string, newState string, additionalData models.JSONMap) error
+	UpdateEscrowState(ctx context.Context, paymentID, newState string, additionalData models.JSONMap) error
 	UpdateEscrowSignatures(ctx context.Context, paymentID string, signatures []models.EscrowSignature) error
-	UpdateEscrowDispute(ctx context.Context, paymentID string, reason string) error
-	UpdateEscrowResolution(ctx context.Context, paymentID string, resolution string) error
+	UpdateEscrowDispute(ctx context.Context, paymentID, reason string) error
+	UpdateEscrowResolution(ctx context.Context, paymentID, resolution string) error
 }
 
 // Store orchestrates the payment-to-fulfillment workflow.
@@ -161,6 +162,23 @@ func (s *Store) UpdatePaymentPayerInfo(ctx context.Context, paymentID string, pa
 		}
 
 		payment.PayerInfo = payerInfo
+		payment.UpdatedAt = time.Now()
+
+		return tx.GetBucket(db.BucketPayments).Put(paymentID, &payment)
+	})
+}
+
+// UpdatePaymentEscrow updates a payment with escrow configuration.
+func (s *Store) UpdatePaymentEscrow(ctx context.Context, paymentID string, escrowEnabled bool, escrowState string, escrowTimeout *time.Time) error {
+	return s.database.Update(func(tx db.Transaction) error {
+		var payment models.Payment
+		if err := tx.GetBucket(db.BucketPayments).Get(paymentID, &payment); err != nil {
+			return fmt.Errorf("payment not found: %w", err)
+		}
+
+		payment.EscrowEnabled = escrowEnabled
+		payment.EscrowState = escrowState
+		payment.EscrowTimeout = escrowTimeout
 		payment.UpdatedAt = time.Now()
 
 		return tx.GetBucket(db.BucketPayments).Put(paymentID, &payment)
@@ -1150,7 +1168,7 @@ func (s *Store) CleanupOldAuditLogs(ctx context.Context, retentionDays int) (int
 // Escrow-related methods
 
 // UpdateEscrowState transitions a payment to a new escrow state.
-func (s *Store) UpdateEscrowState(ctx context.Context, paymentID string, newState string, additionalData models.JSONMap) error {
+func (s *Store) UpdateEscrowState(ctx context.Context, paymentID, newState string, additionalData models.JSONMap) error {
 	return s.database.Update(func(tx db.Transaction) error {
 		var payment models.Payment
 		if err := tx.GetBucket(db.BucketPayments).Get(paymentID, &payment); err != nil {
@@ -1214,7 +1232,7 @@ func (s *Store) UpdateEscrowSignatures(ctx context.Context, paymentID string, si
 }
 
 // UpdateEscrowDispute marks a payment as disputed with a reason.
-func (s *Store) UpdateEscrowDispute(ctx context.Context, paymentID string, reason string) error {
+func (s *Store) UpdateEscrowDispute(ctx context.Context, paymentID, reason string) error {
 	return s.database.Update(func(tx db.Transaction) error {
 		var payment models.Payment
 		if err := tx.GetBucket(db.BucketPayments).Get(paymentID, &payment); err != nil {
@@ -1234,7 +1252,7 @@ func (s *Store) UpdateEscrowDispute(ctx context.Context, paymentID string, reaso
 }
 
 // UpdateEscrowResolution stores the resolution comment for a dispute.
-func (s *Store) UpdateEscrowResolution(ctx context.Context, paymentID string, resolution string) error {
+func (s *Store) UpdateEscrowResolution(ctx context.Context, paymentID, resolution string) error {
 	return s.database.Update(func(tx db.Transaction) error {
 		var payment models.Payment
 		if err := tx.GetBucket(db.BucketPayments).Get(paymentID, &payment); err != nil {

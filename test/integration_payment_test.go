@@ -83,11 +83,11 @@ func (m *mockIntegrationPaywallClient) RefundEscrow(ctx context.Context, payment
 	return nil
 }
 
-func (m *mockIntegrationPaywallClient) DisputeEscrow(ctx context.Context, paymentID string, reason string) error {
+func (m *mockIntegrationPaywallClient) DisputeEscrow(ctx context.Context, paymentID, reason string) error {
 	return nil
 }
 
-func (m *mockIntegrationPaywallClient) ResolveDispute(ctx context.Context, paymentID string, resolution string, arbiterSig paywall.SignatureData) error {
+func (m *mockIntegrationPaywallClient) ResolveDispute(ctx context.Context, paymentID, resolution string, arbiterSig, winnerSig paywall.SignatureData) error {
 	return nil
 }
 
@@ -1222,4 +1222,129 @@ func TestPaymentFlow_CustomHandlerEndToEnd(t *testing.T) {
 	}
 
 	t.Logf("Integration test passed: Custom handler end-to-end")
+}
+
+// TestEscrowPaymentCreation verifies that escrow is properly configured when shipping_form backend is used with multisig-escrow payment mode
+func TestEscrowPaymentCreation(t *testing.T) {
+	// Setup with custom handler registry
+	tmpFile := "/tmp/test_escrow_" + t.Name() + ".db"
+	t.Cleanup(func() {
+		os.Remove(tmpFile)
+	})
+
+	boltDB, err := bolt.Open(tmpFile, 0o600, nil)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	t.Cleanup(func() {
+		boltDB.Close()
+	})
+
+	if err := db.InitBuckets(boltDB); err != nil {
+		t.Fatalf("Failed to initialize buckets: %v", err)
+	}
+
+	// Create handler registry with mock handlers for different types
+	reg := handler.NewRegistry()
+	// Register mock handler
+	mockHandler := &testIntegrationHandler{handlerType: "mock"}
+	if err := reg.Register(mockHandler); err != nil {
+		t.Fatalf("Failed to register mock handler: %v", err)
+	}
+	// Register shipping_form handler (using same mock implementation)
+	shippingHandler := &testIntegrationHandler{handlerType: "shipping_form"}
+	if err := reg.Register(shippingHandler); err != nil {
+		t.Fatalf("Failed to register shipping_form handler: %v", err)
+	}
+
+	database := db.NewBoltDatabase(boltDB)
+	s := store.NewStore(database, reg)
+
+	ctx := context.Background()
+
+	// Configure escrow mode for shipping_form
+	testCfg := &config.Config{
+		PaymentModeShipping:   "multisig-escrow",
+		PaymentModeDigital:    "single-sig",
+		PaymentModePOD:        "single-sig",
+		EscrowTimeoutPhysical: 7 * 24 * time.Hour,
+		PaywallTimeout:        24 * time.Hour,
+	}
+	h := api.NewHandler(s, &mockIntegrationPaywallClient{}, "test-admin-token", testCfg)
+
+	// Create test category and item with shipping_form backend
+	cat := createCategory(s, "Physical Goods", "Physical items requiring shipping")
+	item := models.NewItem(cat.ID, "Test Product", "Physical product", "0.001", "BTC", "shipping_form")
+	item.BackendConfig = models.JSONMap{
+		"requires_shipping": true,
+	}
+	item, err = s.CreateItem(ctx, item)
+	if err != nil {
+		t.Fatalf("Failed to create item: %v", err)
+	}
+
+	// Checkout with shipping_form backend (should trigger escrow)
+	checkoutReq := map[string]string{
+		"item_id": item.ID,
+		"email":   "buyer@example.com",
+	}
+	reqBody, _ := json.Marshal(checkoutReq)
+	req := httptest.NewRequest(http.MethodPost, "/api/checkout", bytes.NewReader(reqBody))
+	w := httptest.NewRecorder()
+
+	h.CreateCheckout(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("Expected status 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		PaymentID      string     `json:"payment_id"`
+		EscrowEnabled  bool       `json:"escrow_enabled"`
+		EscrowState    string     `json:"escrow_state"`
+		EscrowTimeout  *time.Time `json:"escrow_timeout"`
+		PaymentAddress string     `json:"payment_address"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// Verify escrow fields are set in response
+	if !resp.EscrowEnabled {
+		t.Error("Expected escrow_enabled=true for shipping_form backend")
+	}
+
+	if resp.EscrowState != "created" {
+		t.Errorf("Expected escrow_state='created', got %s", resp.EscrowState)
+	}
+
+	if resp.EscrowTimeout == nil {
+		t.Error("Expected escrow_timeout to be set")
+	} else {
+		// Verify timeout is approximately 7 days from now
+		expectedTimeout := time.Now().Add(7 * 24 * time.Hour)
+		if resp.EscrowTimeout.Before(expectedTimeout.Add(-1*time.Minute)) || resp.EscrowTimeout.After(expectedTimeout.Add(1*time.Minute)) {
+			t.Errorf("Escrow timeout not within expected range: got %v, expected ~%v", resp.EscrowTimeout, expectedTimeout)
+		}
+	}
+
+	// Verify payment record in database has escrow fields set
+	payment, err := s.GetPayment(ctx, resp.PaymentID)
+	if err != nil {
+		t.Fatalf("Failed to get payment: %v", err)
+	}
+
+	if !payment.EscrowEnabled {
+		t.Error("Payment.EscrowEnabled should be true")
+	}
+
+	if payment.EscrowState != "created" {
+		t.Errorf("Payment.EscrowState should be 'created', got %s", payment.EscrowState)
+	}
+
+	if payment.EscrowTimeout == nil {
+		t.Error("Payment.EscrowTimeout should be set")
+	}
+
+	t.Logf("Integration test passed: Escrow payment creation")
 }

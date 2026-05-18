@@ -24,14 +24,14 @@ type Service interface {
 
 	// New embedded paywall methods
 	CreateEmbeddedPayment(ctx context.Context, amount float64, timeout time.Duration, useEscrow bool) (*EmbeddedPayment, error)
-	ConfirmEmbeddedPayment(ctx context.Context, paymentID string, txHash string) error
+	ConfirmEmbeddedPayment(ctx context.Context, paymentID, txHash string) error
 	GetEmbeddedPayment(ctx context.Context, paymentID string) (*EmbeddedPayment, error)
 
 	// Escrow-specific methods
 	ReleaseEscrow(ctx context.Context, paymentID string, signatures []SignatureData) error
 	RefundEscrow(ctx context.Context, paymentID string, signatures []SignatureData) error
-	DisputeEscrow(ctx context.Context, paymentID string, reason string) error
-	ResolveDispute(ctx context.Context, paymentID string, resolution string, arbiterSig SignatureData) error
+	DisputeEscrow(ctx context.Context, paymentID, reason string) error
+	ResolveDispute(ctx context.Context, paymentID, resolution string, arbiterSig, winnerSig SignatureData) error
 }
 
 // Verify that EmbeddedPaywall implements Service at compile time.

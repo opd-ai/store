@@ -41,11 +41,6 @@ func (h *Handler) CreateCheckout(w http.ResponseWriter, r *http.Request) {
 	// Determine if escrow should be used based on item backend type and config
 	useEscrow := h.determineEscrowMode(item.BackendType)
 
-	// Log escrow decision for visibility (actual escrow activation would require additional integration)
-	if useEscrow {
-		log.Printf("Payment for item %s (%s backend) will use escrow mode based on config", item.ID, item.BackendType)
-	}
-
 	payment, err := h.store.CreatePayment(r.Context(), req.ItemID, item.Price, item.Currency)
 	if err != nil {
 		metrics.CheckoutErrors.WithLabelValues("payment_creation_failed").Inc()
@@ -55,7 +50,8 @@ func (h *Handler) CreateCheckout(w http.ResponseWriter, r *http.Request) {
 
 	h.savePayerEmail(r.Context(), payment, req.Email)
 
-	invoice, err := h.createPaywallInvoice(r.Context(), payment)
+	// Create invoice with appropriate payment mode (escrow or single-sig)
+	invoice, err := h.createPaywallInvoice(r.Context(), payment, useEscrow)
 	if err != nil {
 		metrics.CheckoutErrors.WithLabelValues("paywall_error").Inc()
 		sendError(w, http.StatusInternalServerError, "Failed to create payment invoice")
@@ -68,7 +64,19 @@ func (h *Handler) CreateCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := h.buildCheckoutResponse(payment, invoice)
+	// Configure escrow if enabled
+	if useEscrow {
+		escrowTimeout := time.Now().Add(h.config.EscrowTimeoutPhysical)
+		if err := h.store.UpdatePaymentEscrow(r.Context(), payment.ID, true, "created", &escrowTimeout); err != nil {
+			log.Printf("Failed to configure escrow: %v", err)
+			sendError(w, http.StatusInternalServerError, "Failed to configure escrow")
+			return
+		}
+		// Reload payment to get updated escrow fields for response
+		payment, _ = h.store.GetPayment(r.Context(), payment.ID)
+	}
+
+	response := h.buildCheckoutResponse(payment, invoice, useEscrow)
 	sendJSON(w, http.StatusCreated, response)
 }
 
@@ -104,7 +112,33 @@ func (h *Handler) savePayerEmail(ctx context.Context, payment *models.Payment, e
 }
 
 // createPaywallInvoice creates an invoice with the paywall service.
-func (h *Handler) createPaywallInvoice(ctx context.Context, payment *models.Payment) (*paywall.Invoice, error) {
+// If useEscrow is true, creates an embedded payment with escrow support.
+func (h *Handler) createPaywallInvoice(ctx context.Context, payment *models.Payment, useEscrow bool) (*paywall.Invoice, error) {
+	if useEscrow {
+		// Parse amount as float for embedded payment
+		var amount float64
+		if _, err := fmt.Sscanf(payment.Amount, "%f", &amount); err != nil {
+			return nil, fmt.Errorf("invalid amount format: %w", err)
+		}
+
+		// Create embedded payment with escrow
+		embeddedPayment, err := h.paywallClient.CreateEmbeddedPayment(ctx, amount, h.config.PaywallTimeout, true)
+		if err != nil {
+			log.Printf("Failed to create escrow payment: %v", err)
+			return nil, err
+		}
+
+		// Convert EmbeddedPayment to Invoice format for backward compatibility
+		return &paywall.Invoice{
+			InvoiceID:      embeddedPayment.ID,
+			Status:         embeddedPayment.Status,
+			PaymentAddress: embeddedPayment.Address,
+			QRCode:         generateQRCodeFromAddress(embeddedPayment.Address, payment.Amount),
+			ExpiresAt:      embeddedPayment.ExpiresAt,
+		}, nil
+	}
+
+	// Standard single-sig invoice
 	callbackURL := fmt.Sprintf("%s/webhook/payment-confirmed", os.Getenv("STORE_PUBLIC_URL"))
 	invoice, err := h.paywallClient.CreateInvoice(ctx, payment.Amount, payment.Currency, callbackURL)
 	if err != nil {
@@ -114,9 +148,15 @@ func (h *Handler) createPaywallInvoice(ctx context.Context, payment *models.Paym
 	return invoice, nil
 }
 
+// generateQRCodeFromAddress generates a QR code data URL for a payment address.
+func generateQRCodeFromAddress(address, amount string) string {
+	// Simple bitcoin: URI format for QR code
+	return fmt.Sprintf("bitcoin:%s?amount=%s", address, amount)
+}
+
 // buildCheckoutResponse constructs the checkout response from payment and invoice data.
-func (h *Handler) buildCheckoutResponse(payment *models.Payment, invoice *paywall.Invoice) map[string]interface{} {
-	return map[string]interface{}{
+func (h *Handler) buildCheckoutResponse(payment *models.Payment, invoice *paywall.Invoice, includeEscrow bool) map[string]interface{} {
+	response := map[string]interface{}{
 		"payment_id":      payment.ID,
 		"invoice_id":      invoice.InvoiceID,
 		"status":          payment.Status,
@@ -126,6 +166,17 @@ func (h *Handler) buildCheckoutResponse(payment *models.Payment, invoice *paywal
 		"qr_code":         invoice.QRCode,
 		"expires_at":      invoice.ExpiresAt,
 	}
+
+	// Include escrow fields if enabled
+	if includeEscrow && payment.EscrowEnabled {
+		response["escrow_enabled"] = payment.EscrowEnabled
+		response["escrow_state"] = payment.EscrowState
+		if payment.EscrowTimeout != nil {
+			response["escrow_timeout"] = payment.EscrowTimeout
+		}
+	}
+
+	return response
 }
 
 // GetPaymentStatus returns the status of a payment.

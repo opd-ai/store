@@ -211,7 +211,7 @@ func (e *EmbeddedPaywall) CreateEmbeddedPayment(ctx context.Context, amount floa
 }
 
 // ConfirmEmbeddedPayment marks a payment as confirmed.
-func (e *EmbeddedPaywall) ConfirmEmbeddedPayment(ctx context.Context, paymentID string, txHash string) error {
+func (e *EmbeddedPaywall) ConfirmEmbeddedPayment(ctx context.Context, paymentID, txHash string) error {
 	// Get the payment
 	payment, err := e.paywall.Store.GetPayment(paymentID)
 	if err != nil {
@@ -390,7 +390,7 @@ func (e *EmbeddedPaywall) RefundEscrow(ctx context.Context, paymentID string, si
 }
 
 // DisputeEscrow marks a payment as disputed.
-func (e *EmbeddedPaywall) DisputeEscrow(ctx context.Context, paymentID string, reason string) error {
+func (e *EmbeddedPaywall) DisputeEscrow(ctx context.Context, paymentID, reason string) error {
 	if !e.multisigEnabled || e.escrowManager == nil {
 		return fmt.Errorf("escrow not enabled")
 	}
@@ -400,14 +400,10 @@ func (e *EmbeddedPaywall) DisputeEscrow(ctx context.Context, paymentID string, r
 }
 
 // ResolveDispute resolves a disputed escrow payment.
-func (e *EmbeddedPaywall) ResolveDispute(ctx context.Context, paymentID string, resolution string, arbiterSig SignatureData) error {
+func (e *EmbeddedPaywall) ResolveDispute(ctx context.Context, paymentID, resolution string, arbiterSig, winnerSig SignatureData) error {
 	if !e.multisigEnabled || e.escrowManager == nil {
 		return fmt.Errorf("escrow not enabled")
 	}
-
-	// TODO: This method signature needs to be extended to include the winner's signature
-	// The paywall library's ResolveDispute requires both arbiter and winner signatures
-	// For now, return an error indicating the limitation
 
 	// Determine winner role based on resolution
 	var winnerRole pw.MultisigRole
@@ -419,8 +415,39 @@ func (e *EmbeddedPaywall) ResolveDispute(ctx context.Context, paymentID string, 
 		return fmt.Errorf("invalid resolution: %s (must be 'release' or 'refund')", resolution)
 	}
 
-	// Note: Full implementation requires extending the API to accept winner signature
-	return fmt.Errorf("dispute resolution requires both arbiter signature and winner signature (role: %s) - API extension needed", winnerRole)
+	// Validate signature roles match expected parties
+	if arbiterSig.Role != "arbiter" {
+		return fmt.Errorf("first signature must be from arbiter, got role: %s", arbiterSig.Role)
+	}
+
+	expectedWinnerRole := string(winnerRole)
+	if winnerSig.Role != expectedWinnerRole {
+		return fmt.Errorf("second signature must be from %s (winner), got role: %s", expectedWinnerRole, winnerSig.Role)
+	}
+
+	// Convert to paywall library signature format
+	pwArbiterSig := &pw.SignatureData{
+		SignerID:  arbiterSig.SignerID,
+		Role:      pw.MultisigRole(arbiterSig.Role),
+		Signature: arbiterSig.Signature,
+		PublicKey: arbiterSig.PublicKey,
+		SignedAt:  arbiterSig.SignedAt,
+	}
+
+	pwWinnerSig := &pw.SignatureData{
+		SignerID:  winnerSig.SignerID,
+		Role:      pw.MultisigRole(winnerSig.Role),
+		Signature: winnerSig.Signature,
+		PublicKey: winnerSig.PublicKey,
+		SignedAt:  winnerSig.SignedAt,
+	}
+
+	// Call paywall library to resolve dispute
+	if err := e.escrowManager.ResolveDispute(paymentID, pwArbiterSig, pwWinnerSig); err != nil {
+		return fmt.Errorf("failed to resolve dispute: %w", err)
+	}
+
+	return nil
 }
 
 // Helper functions for payment generation
@@ -457,7 +484,7 @@ func DecodeKey(keyHex string) ([]byte, error) {
 }
 
 // DecryptKey decrypts an encrypted key using AES-256-GCM.
-func DecryptKey(encryptedKey string, encryptionKey string) ([]byte, error) {
+func DecryptKey(encryptedKey, encryptionKey string) ([]byte, error) {
 	if encryptedKey == "" {
 		return nil, nil
 	}

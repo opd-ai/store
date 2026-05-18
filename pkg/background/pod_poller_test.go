@@ -74,6 +74,10 @@ func (m *mockStoreService) UpdatePaymentPayerInfo(ctx context.Context, paymentID
 	return nil
 }
 
+func (m *mockStoreService) UpdatePaymentEscrow(ctx context.Context, paymentID string, escrowEnabled bool, escrowState string, escrowTimeout *time.Time) error {
+	return nil
+}
+
 func (m *mockStoreService) ConfirmPayment(ctx context.Context, paymentID, paymentHash string) error {
 	return nil
 }
@@ -169,11 +173,11 @@ func (m *mockStoreService) UpdateEscrowSignatures(ctx context.Context, paymentID
 	return nil
 }
 
-func (m *mockStoreService) UpdateEscrowDispute(ctx context.Context, paymentID string, reason string) error {
+func (m *mockStoreService) UpdateEscrowDispute(ctx context.Context, paymentID, reason string) error {
 	return nil
 }
 
-func (m *mockStoreService) UpdateEscrowResolution(ctx context.Context, paymentID string, resolution string) error {
+func (m *mockStoreService) UpdateEscrowResolution(ctx context.Context, paymentID, resolution string) error {
 	return nil
 }
 

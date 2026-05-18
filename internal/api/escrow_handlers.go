@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/gorilla/mux"
@@ -389,20 +390,74 @@ func (h *Handler) ResolveDispute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Store resolution comment
-	if err := h.store.UpdateEscrowResolution(r.Context(), paymentID, req.Comment); err != nil {
-		sendError(w, http.StatusInternalServerError, "Failed to store resolution")
+	// Validate signatures: need arbiter + winner (buyer for refund, seller for release)
+	if len(req.Signatures) < 2 {
+		sendError(w, http.StatusBadRequest, "Dispute resolution requires 2 signatures: arbiter and winner")
 		return
 	}
 
-	// Execute resolution
+	// Extract arbiter and winner signatures
+	var arbiterSig, winnerSig *models.EscrowSignature
+	expectedWinnerRole := "seller"
+	if req.Resolution == "refund" {
+		expectedWinnerRole = "buyer"
+	}
+
+	for i := range req.Signatures {
+		sig := &req.Signatures[i]
+		if sig.SignerRole == "arbiter" {
+			arbiterSig = sig
+		} else if sig.SignerRole == expectedWinnerRole {
+			winnerSig = sig
+		}
+	}
+
+	if arbiterSig == nil {
+		sendError(w, http.StatusBadRequest, "Missing arbiter signature")
+		return
+	}
+
+	if winnerSig == nil {
+		sendError(w, http.StatusBadRequest, fmt.Sprintf("Missing %s signature (winner)", expectedWinnerRole))
+		return
+	}
+
+	// Convert to paywall SignatureData
+	arbiterSigData := paywall.SignatureData{
+		SignerID:  arbiterSig.SignerID,
+		Role:      arbiterSig.SignerRole,
+		Signature: []byte(arbiterSig.Signature),
+		PublicKey: []byte(arbiterSig.PublicKey),
+		SignedAt:  arbiterSig.SignedAt,
+	}
+
+	winnerSigData := paywall.SignatureData{
+		SignerID:  winnerSig.SignerID,
+		Role:      winnerSig.SignerRole,
+		Signature: []byte(winnerSig.Signature),
+		PublicKey: []byte(winnerSig.PublicKey),
+		SignedAt:  winnerSig.SignedAt,
+	}
+
+	// Call paywall client to execute dispute resolution
+	if err := h.paywallClient.ResolveDispute(r.Context(), paymentID, req.Resolution, arbiterSigData, winnerSigData); err != nil {
+		sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to resolve dispute: %v", err))
+		return
+	}
+
+	// Store resolution comment
+	if err := h.store.UpdateEscrowResolution(r.Context(), paymentID, req.Comment); err != nil {
+		log.Printf("Failed to store resolution comment: %v", err)
+	}
+
+	// Update escrow state
 	targetState := "released"
 	if req.Resolution == "refund" {
 		targetState = "refunded"
 	}
 
 	if err := h.store.UpdateEscrowState(r.Context(), paymentID, targetState, nil); err != nil {
-		sendError(w, http.StatusInternalServerError, "Failed to execute resolution")
+		sendError(w, http.StatusInternalServerError, "Failed to update escrow state")
 		return
 	}
 

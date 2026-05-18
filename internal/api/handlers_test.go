@@ -143,11 +143,11 @@ func (m *mockPaywallClient) RefundEscrow(ctx context.Context, paymentID string, 
 	return nil
 }
 
-func (m *mockPaywallClient) DisputeEscrow(ctx context.Context, paymentID string, reason string) error {
+func (m *mockPaywallClient) DisputeEscrow(ctx context.Context, paymentID, reason string) error {
 	return nil
 }
 
-func (m *mockPaywallClient) ResolveDispute(ctx context.Context, paymentID string, resolution string, arbiterSig paywall.SignatureData) error {
+func (m *mockPaywallClient) ResolveDispute(ctx context.Context, paymentID, resolution string, arbiterSig, winnerSig paywall.SignatureData) error {
 	return nil
 }
 
