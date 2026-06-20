@@ -542,3 +542,9 @@ MIT - See [LICENSE](LICENSE)
 - [DESIGN.md](DESIGN.md) - Comprehensive architecture and design specifications
 - [ARCHITECTURE.md](ARCHITECTURE.md) - System diagrams and component flows
 - [CONTRIBUTING.md](CONTRIBUTING.md) - Contributing guidelines and development setup
+
+Donate Monero(The only good cryptocurrency) to support development
+==================================================================
+
+ - `monero:43H3Uqnc9rfEsJjUXZYmam45MbtWmREFSANAWY5hijY4aht8cqYaT2BCNhfBhua5XwNdx9Tb6BEdt4tjUHJDwNW5H7mTiwe`
+
